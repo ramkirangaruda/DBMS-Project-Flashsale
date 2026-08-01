@@ -29,11 +29,13 @@ app/
     demo_5_benchmark.py       THE centerpiece: 3-way comparison table (Section 8.2)
     demo_6_deadlock.py        real Postgres deadlock + wound-wait prevention (Section 8.4)
     demo_7_recovery.py        ACID + WAL undo/redo demo (Section 7)
+    demo_8_indexing.py        EXPLAIN ANALYZE before/after each Section 6 index (Section 6)
   ml/
     demand_forecast.py        GradientBoosting demand model (Section 10.1)
     bot_detection.py          Isolation Forest bot detection (Section 10.2)
 scripts/
   seed.py                creates tables + seeds a scarce-stock flash sale
+  seed_large.py          bulk-seeds ~200k orders (COPY, not the ORM) for demo_8_indexing.py
 docker-compose.yml       Postgres + Redis for your own machine
 requirements.txt
 ```
@@ -61,6 +63,8 @@ python -m app.demos.demo_4_redis_atomic   # expect: exactly 1 confirmed, fastest
 python -m app.demos.demo_5_benchmark      # THE comparison table for your report
 python -m app.demos.demo_6_deadlock       # expect: a real Postgres deadlock, then wound-wait avoiding one
 python -m app.demos.demo_7_recovery       # expect: broken-without-transaction vs correct-with-transaction
+python -m scripts.seed_large              # one-time: bulk-seeds ~200k orders for demo_8 (takes a minute or two)
+python -m app.demos.demo_8_indexing       # expect: Seq Scan without each index, Index/Bitmap/Hash Scan with it
 python -m app.ml.demand_forecast          # expect: R^2 > 0.9, feature importances
 python -m app.ml.bot_detection            # expect: ~80%+ recall catching synthetic bots
 ```
@@ -107,8 +111,8 @@ the seed script) to try the checkout endpoints.
   if you want to strengthen Section 10.1 further (Kaggle's "Online Retail
   Dataset" is a good fit; the model code doesn't need to change, just the
   data loader)
-- The Section 6 indexes themselves (composite B+ tree on
-  `Order(sale_id, created_at)`, hash index on `User.device_fingerprint`)
-  are already created by `scripts/seed.py`. Still worth adding: the
-  `EXPLAIN ANALYZE` comparison script proving they're used, once you've
-  seeded a larger synthetic dataset (~100k rows)
+- Section 6 is fully covered now: `scripts/seed.py` creates the composite
+  B+ tree index on `Order(sale_id, created_at)` and the hash index on
+  `User.device_fingerprint`, `scripts/seed_large.py` bulk-loads ~200k
+  orders to make them worth measuring, and `demo_8_indexing.py` proves
+  each one is used via before/after `EXPLAIN ANALYZE`
