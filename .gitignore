@@ -8,6 +8,10 @@ __pycache__/
 
 # Generated at seed time -- not source
 scripts/seed_ids.py
+scripts/seed_ids_large.py
+
+# Real datasets -- multi-MB, not committed; see README for download instructions
+data/*.xlsx
 
 # Env / secrets
 .env

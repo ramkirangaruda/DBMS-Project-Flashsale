@@ -33,11 +33,15 @@ app/
     demo_9_timestamp_ordering.py  Basic T/O + Thomas's Write Rule, app-level protocol (Section 8.3)
     demo_10_multigranularity.py   table-level pause vs row-level checkouts, pg_locks + IS/IX/S/X mapping (Section 8.5)
   ml/
-    demand_forecast.py        GradientBoosting demand model (Section 10.1)
+    demand_forecast.py        GradientBoosting demand model, trained on real
+                               data by default (Section 10.1) -- see below
     bot_detection.py          Isolation Forest bot detection (Section 10.2)
 scripts/
   seed.py                creates tables + seeds a scarce-stock flash sale
   seed_large.py          bulk-seeds ~200k orders (COPY, not the ORM) for demo_8_indexing.py
+data/
+  online_retail.xlsx      UCI "Online Retail" dataset -- NOT committed (data/*.xlsx
+                           is gitignored, it's ~23MB); download it yourself, see below
 docker-compose.yml       Postgres + Redis for your own machine
 requirements.txt
 ```
@@ -55,6 +59,18 @@ python -m scripts.seed         # creates tables, seeds demo data
 Set environment variables if your Postgres isn't on localhost defaults
 (`POSTGRES_HOST`, `POSTGRES_PASSWORD`, etc. — see `app/database.py`).
 
+To train `demand_forecast.py` on real data (the default; see Section 10.1
+below), download the UCI "Online Retail" dataset and save it exactly here:
+
+```bash
+mkdir -p data
+curl -L -o data/online_retail.xlsx \
+  "https://archive.ics.uci.edu/ml/machine-learning-databases/00352/Online%20Retail.xlsx"
+```
+
+If you skip this, `demand_forecast.py` still runs -- it prints a warning
+and falls back to its synthetic demo generator instead.
+
 ## Running the demos, in the order they map to your report
 
 ```bash
@@ -69,7 +85,8 @@ python -m scripts.seed_large              # one-time: bulk-seeds ~200k orders fo
 python -m app.demos.demo_8_indexing       # expect: Seq Scan without each index, Index/Bitmap/Hash Scan with it
 python -m app.demos.demo_9_timestamp_ordering  # expect: one rollback, one Thomas's-Rule skip, one confirmed
 python -m app.demos.demo_10_multigranularity   # expect: checkouts visibly blocked, pg_locks shows the wait
-python -m app.ml.demand_forecast          # expect: R^2 > 0.9, feature importances
+python -m app.ml.demand_forecast          # trains on real data if data/online_retail.xlsx exists,
+                                           # else falls back to synthetic with a printed warning
 python -m app.ml.bot_detection            # expect: ~80%+ recall catching synthetic bots
 ```
 
@@ -95,6 +112,56 @@ rejections never touch PostgreSQL at all. Paste this table directly into
 Section 8.2 of your report — regenerate it yourself for your own numbers,
 since exact timings depend on your machine.
 
+## Section 10.1 -- demand_forecast.py now trains on real data
+
+`data/online_retail.xlsx` is the UCI "Online Retail" dataset (~541k line
+items, a UK-based online gift retailer, Dec 2010-Dec 2011) -- the same
+dataset Kaggle mirrors. `load_real_data()` cleans it (drops cancelled
+orders, missing `CustomerID`, non-positive `Quantity`/`UnitPrice`),
+restricts to the 500 best-selling SKUs so each item has enough trading
+history for a stable rolling feature, and reframes it as: predict a SKU's
+units sold on the next calendar day from price, an implied discount,
+item popularity, and calendar effects.
+
+Sample result actually produced by `python -m app.ml.demand_forecast`
+against the real dataset:
+
+```
+Training rows: 132,616   Test rows: 33,154
+Mean Absolute Error: 21.84 units (next_day_qty)
+R^2 score: 0.082
+
+Feature importances:
+  pre_period_demand            0.426
+  day_of_week                  0.286
+  category_popularity          0.188
+  base_price                   0.044
+  discount_pct                 0.038
+  is_weekend                   0.016
+```
+
+Be upfront about this in your report: R^2 = 0.082 is real -- next-day
+retail demand is genuinely noisy and this is a much harder problem than
+the synthetic version's clean generative model (which scores R^2 > 0.9
+because it *is* the ground truth function plus Gaussian noise, by
+construction). A low R^2 on real data next to a high one on synthetic
+data is itself a useful thing to discuss in Section 10.1: it's the
+difference between "the model recovered the formula we used to generate
+the labels" and "the model found real signal in a genuinely hard
+real-world series."
+
+**Feature name mapping (real vs. synthetic) -- describe this honestly in
+your report, since the two datasets don't have identical columns:**
+
+| Synthetic (`generate_synthetic_fallback_data`) | Real (`load_real_data`) | Real proxy for what it represents |
+|---|---|---|
+| `base_price` | `base_price` | mean `UnitPrice` for that SKU on that day |
+| `discount_pct` | `discount_pct` | how far today's price sits below that SKU's own median price, clipped at 0 -- the raw data has no discount field, so a price dip below the item's normal price is the honest proxy |
+| `category_popularity` | `category_popularity` | SKU's total-units-sold rank across the whole dataset, bucketed 1 (niche)-5 (bestseller), instead of an assigned category id |
+| `day_of_week` / `is_weekend` | `day_of_week` / `is_weekend` | identical -- derived from the date either way |
+| `wishlist_count_pre_sale` | `pre_period_demand` | trailing 7-day unit sales for that SKU (excluding today) -- the real analogue of a pre-event demand signal, measured in actual past sales instead of wishlist adds, since the dataset has no wishlist data |
+| `orders_first_60s` (target) | `next_day_qty` (target) | next-day granularity, not next-60-seconds -- the dataset's timestamps support next-day aggregation reliably; per-SKU purchase counts at hourly/sub-minute granularity are almost all zero and too sparse to model |
+
 ## Running the API
 
 ```bash
@@ -111,10 +178,10 @@ the seed script) to try the checkout endpoints.
   `bot_detection.py` (currently the ML scripts run standalone for clarity —
   connecting them to live `UserBehaviorLog` rows is a natural next step
   and a good thing to show progress on across your build weeks)
-- Swap `demand_forecast.py`'s synthetic data generator for a real dataset
-  if you want to strengthen Section 10.1 further (Kaggle's "Online Retail
-  Dataset" is a good fit; the model code doesn't need to change, just the
-  data loader)
+- Section 10.1 is fully covered now: `demand_forecast.py` trains on the
+  real UCI "Online Retail" dataset by default via `load_real_data()`, with
+  the synthetic generator kept only as a no-dataset fallback -- see the
+  Section 10.1 writeup above for real metrics and the feature-name mapping
 - Section 6 is fully covered now: `scripts/seed.py` creates the composite
   B+ tree index on `Order(sale_id, created_at)` and the hash index on
   `User.device_fingerprint`, `scripts/seed_large.py` bulk-loads ~200k

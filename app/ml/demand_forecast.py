@@ -1,30 +1,52 @@
 """
 Section 10.1 -- Demand Forecasting
 
-Trains a gradient-boosting regressor to predict purchase velocity (orders
-in the first N seconds of a sale) from historical sale features. This is
-what feeds the safety-stock buffer decision mentioned in the design doc.
+Trains a gradient-boosting regressor to predict purchase velocity from
+historical demand features. This is what feeds the safety-stock buffer
+decision mentioned in the design doc: a SKU predicted at high volume
+should get pessimistic locking (correctness under heavy contention); a
+SKU predicted at low volume can safely use OCC (lower overhead, low
+contention).
 
-NOTE ON DATA: this script generates a *labeled synthetic* dataset that
-mimics realistic flash-sale demand patterns (price elasticity, weekday
-effects, category popularity, promotional buzz). It's built so you can
-swap in a real dataset (e.g. Kaggle's "Online Retail Dataset" or "M5
-Forecasting") by replacing `generate_training_data()` with a loader that
-returns a DataFrame with the same column names -- the model code doesn't
-change. Being upfront about this in your report is a good thing to call
-out explicitly: it shows you understand the difference between a
-demonstration dataset and a production one.
+DATA: load_real_data() trains on the UCI "Online Retail" dataset --
+~541k line items from a UK-based online gift retailer, Dec 2010-Dec 2011
+(https://archive.ics.uci.edu/ml/machine-learning-databases/00352/Online%20Retail.xlsx).
+Download it to data/online_retail.xlsx (not committed -- see README) and
+this is the default path train_and_evaluate() takes.
+
+generate_synthetic_fallback_data() is kept only so this script still runs
+for someone without the xlsx file -- it's a labeled synthetic generator
+that mimics realistic flash-sale demand patterns, NOT real data. If
+data/online_retail.xlsx is missing, train_and_evaluate() falls back to it
+automatically and prints a warning; it is not the default path.
 
 Run with: venv/bin/python -m app.ml.demand_forecast
 """
+import os
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, r2_score
 
+DATA_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "online_retail.xlsx"
+)
 
-def generate_training_data(n=2000, seed=42):
+REAL_FEATURE_COLS = ["base_price", "discount_pct", "category_popularity", "day_of_week", "pre_period_demand", "is_weekend"]
+REAL_TARGET_COL = "next_day_qty"
+
+SYNTHETIC_FEATURE_COLS = ["base_price", "discount_pct", "category_popularity", "day_of_week", "wishlist_count_pre_sale", "is_weekend"]
+SYNTHETIC_TARGET_COL = "orders_first_60s"
+
+
+def generate_synthetic_fallback_data(n=2000, seed=42):
+    """FALLBACK / DEMO-ONLY generator. Used only when data/online_retail.xlsx
+    isn't present, so this script still runs end to end for someone without
+    the dataset. Produces a labeled synthetic dataset that mimics realistic
+    flash-sale demand patterns (price elasticity, weekday effects, category
+    popularity, promotional buzz) -- but it is NOT real data. See
+    load_real_data() for the actual Section 10.1 model."""
     rng = np.random.default_rng(seed)
 
     base_price = rng.uniform(20, 300, n)
@@ -57,11 +79,118 @@ def generate_training_data(n=2000, seed=42):
     })
 
 
-def train_and_evaluate():
-    df = generate_training_data()
-    feature_cols = ["base_price", "discount_pct", "category_popularity", "day_of_week", "wishlist_count_pre_sale", "is_weekend"]
+def load_real_data(path=DATA_PATH, top_n_skus=500, pre_period_days=7):
+    """
+    Loads the UCI "Online Retail" dataset and reframes it into the same
+    purchase-velocity-style supervised learning problem the synthetic
+    generator demonstrates: predict next-day purchase volume per SKU from
+    price, discounting, item popularity, and calendar effects.
+
+    Cleaning:
+      - drop cancelled orders (InvoiceNo starting with 'C')
+      - drop rows with missing CustomerID
+      - drop non-positive Quantity / UnitPrice
+
+    Feature engineering (real analogues of the synthetic feature set --
+    see the README for the full name-by-name mapping):
+      - base_price          : mean UnitPrice for that SKU on that day
+      - discount_pct        : how far today's price sits below this SKU's
+                               own median price, clipped at 0 -- there's
+                               no explicit discount field in the raw data,
+                               so a price dip below the item's own normal
+                               price is the closest honest proxy
+      - category_popularity : SKU's total-units-sold rank across the whole
+                               dataset, bucketed 1 (niche) - 5 (bestseller)
+      - day_of_week / is_weekend : from the invoice date
+      - pre_period_demand   : trailing `pre_period_days`-day unit sales for
+                               that SKU, EXCLUDING today -- the real
+                               analogue of wishlist_count_pre_sale (a
+                               pre-event signal that predicts what happens
+                               next, just measured in actual past sales
+                               instead of wishlist adds)
+
+    Target: next_day_qty, this SKU's total units sold on the following
+    calendar day.
+
+    Restricted to the `top_n_skus` best-selling SKUs so each item has
+    enough trading history for a stable rolling pre-period feature and a
+    well-defined "next day" -- a normal curation step for a per-SKU time
+    series model, not a synthetic shortcut.
+    """
+    df = pd.read_excel(path)
+
+    df = df[~df["InvoiceNo"].astype(str).str.startswith("C")]
+    df = df.dropna(subset=["CustomerID"])
+    df = df[(df["Quantity"] > 0) & (df["UnitPrice"] > 0)]
+
+    df["day"] = df["InvoiceDate"].dt.floor("D")
+
+    top_skus = df.groupby("StockCode")["Quantity"].sum().nlargest(top_n_skus).index
+    df = df[df["StockCode"].isin(top_skus)]
+
+    daily = df.groupby(["StockCode", "day"]).agg(
+        qty=("Quantity", "sum"),
+        price=("UnitPrice", "mean"),
+    ).reset_index()
+
+    total_by_sku = df.groupby("StockCode")["Quantity"].sum()
+    popularity_rank = pd.qcut(total_by_sku, 5, labels=False, duplicates="drop") + 1
+    daily["category_popularity"] = daily["StockCode"].map(popularity_rank)
+
+    median_price_by_sku = df.groupby("StockCode")["UnitPrice"].median()
+    daily["median_price"] = daily["StockCode"].map(median_price_by_sku)
+    daily["discount_pct"] = ((daily["median_price"] - daily["price"]) / daily["median_price"]).clip(lower=0)
+
+    # Build a continuous per-SKU daily panel (filling no-sale days with 0
+    # quantity) so "next calendar day" and "trailing N days" are both
+    # well-defined -- not just "the next day this SKU happened to sell".
+    frames = []
+    for sku, g in daily.groupby("StockCode"):
+        g = g.set_index("day").sort_index()
+        full_range = pd.date_range(g.index.min(), g.index.max(), freq="D")
+        g = g.reindex(full_range)
+        g["StockCode"] = sku
+        g["qty"] = g["qty"].fillna(0)
+        g[["price", "category_popularity", "median_price"]] = g[["price", "category_popularity", "median_price"]].ffill().bfill()
+        g["discount_pct"] = g["discount_pct"].fillna(0)
+        frames.append(g)
+    panel = pd.concat(frames)
+
+    panel["day_of_week"] = panel.index.dayofweek
+    panel["is_weekend"] = (panel["day_of_week"] >= 5).astype(int)
+
+    panel["pre_period_demand"] = (
+        panel.groupby("StockCode")["qty"]
+        .transform(lambda s: s.shift(1).rolling(pre_period_days, min_periods=1).sum())
+    )
+    panel["next_day_qty"] = panel.groupby("StockCode")["qty"].shift(-1)
+
+    panel = panel.dropna(subset=["pre_period_demand", "next_day_qty"])
+    panel = panel.rename(columns={"price": "base_price"})
+
+    return panel[REAL_FEATURE_COLS + [REAL_TARGET_COL]].reset_index(drop=True)
+
+
+def train_and_evaluate(force_synthetic=False):
+    use_real = (not force_synthetic) and os.path.exists(DATA_PATH)
+
+    if use_real:
+        print(f"Loading real data from {DATA_PATH} ...")
+        df = load_real_data()
+        feature_cols, target_col = REAL_FEATURE_COLS, REAL_TARGET_COL
+        source_label = "UCI Online Retail dataset (real data)"
+    else:
+        if not force_synthetic:
+            print(f"WARNING: {DATA_PATH} not found -- falling back to the SYNTHETIC")
+            print("demo generator (NOT real data). Download the real dataset per the")
+            print("README to train on actual data instead:")
+            print("  https://archive.ics.uci.edu/ml/machine-learning-databases/00352/Online%20Retail.xlsx\n")
+        df = generate_synthetic_fallback_data()
+        feature_cols, target_col = SYNTHETIC_FEATURE_COLS, SYNTHETIC_TARGET_COL
+        source_label = "synthetic demo generator (NOT real data)"
+
     X = df[feature_cols]
-    y = df["orders_first_60s"]
+    y = df[target_col]
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
@@ -74,7 +203,9 @@ def train_and_evaluate():
 
     print("Demand Forecasting Model")
     print("=" * 50)
-    print(f"Mean Absolute Error: {mae:.2f} orders in first 60s")
+    print(f"Data source: {source_label}")
+    print(f"Training rows: {len(X_train):,}   Test rows: {len(X_test):,}")
+    print(f"Mean Absolute Error: {mae:.2f} units ({target_col})")
     print(f"R^2 score: {r2:.3f}")
     print()
     print("Feature importances:")
@@ -87,9 +218,9 @@ def train_and_evaluate():
         print(f"  predicted={preds[i]:.1f}   actual={y_test.values[i]:.1f}")
 
     print()
-    print("Use case: predicted orders_first_60s feeds the safety-stock buffer --")
-    print("a SKU predicted at 80 orders/60s should get pessimistic locking")
-    print("(correctness under heavy contention); a SKU predicted at 3 orders/60s")
+    print("Use case: predicted next-period demand feeds the safety-stock buffer --")
+    print("a SKU predicted at high volume should get pessimistic locking")
+    print("(correctness under heavy contention); a SKU predicted at low volume")
     print("can safely use OCC (lower overhead, low contention).")
 
     return model
