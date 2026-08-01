@@ -31,6 +31,7 @@ app/
     demo_7_recovery.py        ACID + WAL undo/redo demo (Section 7)
     demo_8_indexing.py        EXPLAIN ANALYZE before/after each Section 6 index (Section 6)
     demo_9_timestamp_ordering.py  Basic T/O + Thomas's Write Rule, app-level protocol (Section 8.3)
+    demo_10_multigranularity.py   table-level pause vs row-level checkouts, pg_locks + IS/IX/S/X mapping (Section 8.5)
   ml/
     demand_forecast.py        GradientBoosting demand model (Section 10.1)
     bot_detection.py          Isolation Forest bot detection (Section 10.2)
@@ -67,6 +68,7 @@ python -m app.demos.demo_7_recovery       # expect: broken-without-transaction v
 python -m scripts.seed_large              # one-time: bulk-seeds ~200k orders for demo_8 (takes a minute or two)
 python -m app.demos.demo_8_indexing       # expect: Seq Scan without each index, Index/Bitmap/Hash Scan with it
 python -m app.demos.demo_9_timestamp_ordering  # expect: one rollback, one Thomas's-Rule skip, one confirmed
+python -m app.demos.demo_10_multigranularity   # expect: checkouts visibly blocked, pg_locks shows the wait
 python -m app.ml.demand_forecast          # expect: R^2 > 0.9, feature importances
 python -m app.ml.bot_detection            # expect: ~80%+ recall catching synthetic bots
 ```
