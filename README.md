@@ -30,6 +30,7 @@ app/
     demo_6_deadlock.py        real Postgres deadlock + wound-wait prevention (Section 8.4)
     demo_7_recovery.py        ACID + WAL undo/redo demo (Section 7)
     demo_8_indexing.py        EXPLAIN ANALYZE before/after each Section 6 index (Section 6)
+    demo_9_timestamp_ordering.py  Basic T/O + Thomas's Write Rule, app-level protocol (Section 8.3)
   ml/
     demand_forecast.py        GradientBoosting demand model (Section 10.1)
     bot_detection.py          Isolation Forest bot detection (Section 10.2)
@@ -65,6 +66,7 @@ python -m app.demos.demo_6_deadlock       # expect: a real Postgres deadlock, th
 python -m app.demos.demo_7_recovery       # expect: broken-without-transaction vs correct-with-transaction
 python -m scripts.seed_large              # one-time: bulk-seeds ~200k orders for demo_8 (takes a minute or two)
 python -m app.demos.demo_8_indexing       # expect: Seq Scan without each index, Index/Bitmap/Hash Scan with it
+python -m app.demos.demo_9_timestamp_ordering  # expect: one rollback, one Thomas's-Rule skip, one confirmed
 python -m app.ml.demand_forecast          # expect: R^2 > 0.9, feature importances
 python -m app.ml.bot_detection            # expect: ~80%+ recall catching synthetic bots
 ```
