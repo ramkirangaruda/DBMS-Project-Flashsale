@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Column, String, Integer, Numeric, DateTime, ForeignKey, Enum, Text
+    Column, String, Integer, Numeric, DateTime, ForeignKey, Enum, Text, Index
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -39,10 +39,20 @@ class User(Base):
     id = uuid_pk()
     name = Column(String(120), nullable=False)
     email = Column(String(200), nullable=False, unique=True)
-    device_fingerprint = Column(String(200), index=True)  # hash index target, see Section 6
+    device_fingerprint = Column(String(200))
     created_at = Column(DateTime(timezone=True), default=now_utc)
 
     orders = relationship("Order", back_populates="user")
+
+    __table_args__ = (
+        # Exact-match only ("how many accounts share this device fingerprint"),
+        # no range queries needed -- hash index per Section 6.
+        Index(
+            "ix_users_device_fingerprint_hash",
+            "device_fingerprint",
+            postgresql_using="hash",
+        ),
+    )
 
 
 class Product(Base):
@@ -99,12 +109,19 @@ class Order(Base):
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     sale_id = Column(UUID(as_uuid=True), ForeignKey("flash_sale_events.id"), nullable=False)
     status = Column(Enum(OrderStatus), default=OrderStatus.pending, nullable=False)
-    created_at = Column(DateTime(timezone=True), default=now_utc, index=True)  # part of the B+tree composite index
+    created_at = Column(DateTime(timezone=True), default=now_utc)
 
     user = relationship("User", back_populates="orders")
     sale = relationship("FlashSaleEvent", back_populates="orders")
     items = relationship("OrderItem", back_populates="order")
     flag = relationship("FlaggedOrder", back_populates="order", uselist=False)
+
+    __table_args__ = (
+        # Composite B+ tree index -- "all orders for this sale in the last
+        # N seconds" per Section 6. sale_id leads so equality filters on
+        # sale_id can also range-scan created_at within the same index.
+        Index("ix_orders_sale_id_created_at", "sale_id", "created_at"),
+    )
 
 
 class OrderItem(Base):

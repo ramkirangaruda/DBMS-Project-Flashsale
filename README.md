@@ -12,7 +12,14 @@ app/
   database.py          SQLAlchemy engine/session setup
   models.py             ER schema: User, Product, FlashSaleEvent, Inventory,
                          Order, OrderItem, UserBehaviorLog, FlaggedOrder,
-                         StockAuditLog
+                         StockAuditLog. Section 6 indexes are declared as
+                         explicit Index() entries in __table_args__ (not
+                         column-level index=True): a composite B+ tree index
+                         on Order(sale_id, created_at) for "orders for this
+                         sale in the last N seconds", and a hash index
+                         (postgresql_using="hash") on
+                         User.device_fingerprint for exact-match lookups
+                         only.
   main.py                FastAPI app (checkout endpoints, sale info, flagged orders)
   demos/
     demo_1_oversell.py        the lost-update problem, unguarded (Section 8.1)
@@ -100,5 +107,8 @@ the seed script) to try the checkout endpoints.
   if you want to strengthen Section 10.1 further (Kaggle's "Online Retail
   Dataset" is a good fit; the model code doesn't need to change, just the
   data loader)
-- Add the B+ tree / hash index `EXPLAIN ANALYZE` comparison script for
-  Section 6 once you've seeded a larger synthetic dataset (~100k rows)
+- The Section 6 indexes themselves (composite B+ tree on
+  `Order(sale_id, created_at)`, hash index on `User.device_fingerprint`)
+  are already created by `scripts/seed.py`. Still worth adding: the
+  `EXPLAIN ANALYZE` comparison script proving they're used, once you've
+  seeded a larger synthetic dataset (~100k rows)
