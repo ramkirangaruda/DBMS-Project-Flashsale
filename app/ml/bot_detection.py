@@ -17,9 +17,16 @@ Features used (all pulled from UserBehaviorLog in the real schema):
   - requests_per_ip_per_min: request rate from the same IP
 
 Run with: venv/bin/python -m app.ml.bot_detection
+
+score_sessions(db) below is the real-data counterpart: it scores actual
+UserBehaviorLog rows (written by app/main.py's checkout endpoints) instead
+of this synthetic generator, and writes results back to FlaggedOrder /
+Order.status. Run it via scripts/run_bot_scoring.py, not inline in a
+checkout request -- see that script's docstring for why.
 """
 import numpy as np
 import pandas as pd
+from sqlalchemy import text
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
 
@@ -93,6 +100,100 @@ def train_and_evaluate():
     print("rather than requiring a labeled training set we don't actually have.")
     print("The 'is_actually_bot' column above exists ONLY to evaluate this demo --")
     print("it was never shown to the model during training.")
+
+
+def score_sessions(db, contamination=0.1, min_sessions=20):
+    """
+    Batch-scores REAL UserBehaviorLog rows (as opposed to train_and_evaluate()'s
+    synthetic demo data), and writes results back to FlaggedOrder / Order.status.
+
+    Feature engineering, computed from actual data instead of synthetic columns:
+      - checkout_latency_ms:     checkout_time - page_load_time, per session
+      - session_duration_ms:     as logged (falls back to checkout_latency_ms
+                                  if a row predates that column being populated)
+      - accounts_per_device:     COUNT(*) of ALL users sharing that user's
+                                  device_fingerprint (from the full users table,
+                                  not just users with a logged session -- the
+                                  same signal the Section 6 hash index exists
+                                  to look up quickly)
+      - requests_per_ip_per_min: how many logged checkouts came from the same
+                                  ip_address in the same one-minute bucket as
+                                  this session (a bucketed count, not a sliding
+                                  window -- a reasonable proxy at demo scale)
+
+    Only sessions with a non-null order_id (i.e. the checkout actually
+    succeeded) can be flagged -- there's no Order to attach a FlaggedOrder
+    row to otherwise. Rejected/failed attempts are still scored as part of
+    the batch (their behavior contributes to what "normal" looks like) but
+    can't themselves be flagged in FlaggedOrder.
+    """
+    query = """
+        SELECT
+            ubl.id AS log_id, ubl.user_id, ubl.order_id, ubl.ip_address,
+            ubl.page_load_time, ubl.checkout_time, ubl.session_duration_ms,
+            u.device_fingerprint
+        FROM user_behavior_logs ubl
+        JOIN users u ON u.id = ubl.user_id
+        WHERE ubl.checkout_time IS NOT NULL AND ubl.page_load_time IS NOT NULL
+    """
+    df = pd.read_sql(text(query), db.connection())
+
+    if len(df) < min_sessions:
+        print(f"Only {len(df)} real sessions logged -- need at least {min_sessions} for a "
+              f"meaningful scoring pass (Isolation Forest needs a real batch to compare against).")
+        print("Run some checkouts through the API (or demo_5_benchmark.py) first, then re-run this.")
+        return df.iloc[0:0]
+
+    df["checkout_latency_ms"] = (df["checkout_time"] - df["page_load_time"]).dt.total_seconds() * 1000
+    df["session_duration_ms"] = df["session_duration_ms"].fillna(df["checkout_latency_ms"])
+
+    device_counts = pd.read_sql(
+        text("SELECT device_fingerprint, COUNT(*) AS accounts_per_device FROM users GROUP BY device_fingerprint"),
+        db.connection(),
+    )
+    df = df.merge(device_counts, on="device_fingerprint", how="left")
+    df["accounts_per_device"] = df["accounts_per_device"].fillna(1)
+
+    df["minute_bucket"] = df["checkout_time"].dt.floor("min")
+    df["requests_per_ip_per_min"] = df.groupby(["ip_address", "minute_bucket"])["log_id"].transform("count")
+
+    feature_cols = ["checkout_latency_ms", "session_duration_ms", "accounts_per_device", "requests_per_ip_per_min"]
+    X = df[feature_cols]
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    model = IsolationForest(n_estimators=200, contamination=contamination, random_state=42)
+    model.fit(X_scaled)
+    raw_pred = model.predict(X_scaled)
+    df["flagged"] = (raw_pred == -1).astype(int)
+    df["anomaly_score"] = -model.decision_function(X_scaled)
+
+    flaggable = df[(df["flagged"] == 1) & df["order_id"].notna()].copy()
+
+    for _, row in flaggable.iterrows():
+        db.execute(
+            text("""
+                INSERT INTO flagged_orders (id, order_id, anomaly_score, flagged_at, review_status)
+                VALUES (gen_random_uuid(), :oid, :score, now(), 'pending')
+                ON CONFLICT (order_id) DO UPDATE
+                SET anomaly_score = EXCLUDED.anomaly_score, flagged_at = now(), review_status = 'pending'
+            """),
+            {"oid": row["order_id"], "score": float(row["anomaly_score"])},
+        )
+        db.execute(text("UPDATE orders SET status = 'flagged' WHERE id = :oid"), {"oid": row["order_id"]})
+    db.commit()
+
+    print("Bot/Scalper Detection -- real-data scoring pass")
+    print("=" * 60)
+    print(f"Sessions scored: {len(df)}")
+    print(f"Flagged as anomalous: {int(df['flagged'].sum())}")
+    print(f"  ...of which tied to a real (successful) order and written to FlaggedOrder: {len(flaggable)}")
+    if len(flaggable):
+        print("\nFlagged sessions:")
+        print(flaggable[["order_id"] + feature_cols + ["anomaly_score"]].to_string(index=False))
+
+    return flaggable
 
 
 if __name__ == "__main__":

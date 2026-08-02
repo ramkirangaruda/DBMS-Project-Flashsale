@@ -143,6 +143,12 @@ class UserBehaviorLog(Base):
     id = uuid_pk()
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     sale_id = Column(UUID(as_uuid=True), ForeignKey("flash_sale_events.id"), nullable=False)
+    # Set when the checkout attempt actually produced an order; NULL for a
+    # rejected/failed attempt (sold out, version conflict, etc). This is
+    # what lets score_sessions() tie a flagged session back to a specific
+    # Order without guessing from timestamps -- important once checkouts
+    # are concurrent, where "nearest order by time" can pick the wrong one.
+    order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=True)
     page_load_time = Column(DateTime(timezone=True))
     checkout_time = Column(DateTime(timezone=True))
     ip_address = Column(String(64))
