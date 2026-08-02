@@ -1,0 +1,87 @@
+erDiagram
+    PRODUCT ||--o{ FLASH_SALE_EVENT : "has"
+    FLASH_SALE_EVENT ||--|| INVENTORY : "has exactly one"
+    FLASH_SALE_EVENT ||--o{ ORDER : "sold in"
+    USER ||--o{ ORDER : "places"
+    ORDER ||--o{ ORDER_ITEM : "contains"
+    ORDER ||--o| FLAGGED_ORDER : "may be flagged as"
+    USER ||--o{ USER_BEHAVIOR_LOG : "generates"
+    FLASH_SALE_EVENT ||--o{ USER_BEHAVIOR_LOG : "logged during"
+    ORDER |o--o| USER_BEHAVIOR_LOG : "tied to (nullable)"
+    INVENTORY ||--o{ STOCK_AUDIT_LOG : "audited by"
+
+    PRODUCT {
+        UUID id PK
+        string name
+        string category
+        numeric base_price
+    }
+
+    FLASH_SALE_EVENT {
+        UUID id PK
+        UUID product_id FK
+        datetime start_time
+        datetime end_time
+        numeric sale_price
+    }
+
+    INVENTORY {
+        UUID id PK
+        UUID sale_id FK "unique -- 1:1 with FlashSaleEvent"
+        int total_stock
+        int reserved_stock
+        int version "OCC version column"
+    }
+
+    USER {
+        UUID id PK
+        string name
+        string email "unique"
+        string device_fingerprint "hash index"
+        datetime created_at
+    }
+
+    ORDER {
+        UUID id PK
+        UUID user_id FK
+        UUID sale_id FK
+        enum status "pending/confirmed/failed/flagged"
+        datetime created_at "composite B+ tree idx with sale_id"
+    }
+
+    ORDER_ITEM {
+        UUID id PK
+        UUID order_id FK
+        UUID product_id FK
+        int quantity
+        numeric price_at_purchase
+    }
+
+    USER_BEHAVIOR_LOG {
+        UUID id PK
+        UUID user_id FK
+        UUID sale_id FK
+        UUID order_id FK "nullable -- set only if attempt succeeded"
+        datetime page_load_time
+        datetime checkout_time
+        string ip_address
+        int session_duration_ms
+    }
+
+    FLAGGED_ORDER {
+        UUID id PK
+        UUID order_id FK "unique -- 1:0..1 with Order"
+        numeric anomaly_score
+        datetime flagged_at
+        string review_status
+    }
+
+    STOCK_AUDIT_LOG {
+        UUID id PK
+        UUID inventory_id FK
+        string operation
+        int before_value
+        int after_value
+        datetime timestamp
+        string committed "true/false -- redo/undo demo"
+    }

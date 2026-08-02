@@ -1,0 +1,15 @@
+%% Precedence graph for the 3-concurrent-checkout schedule from demo_1_oversell.py naive_checkout(): R(Inventory) then sleep(0.05s) then W(Inventory), W(Order), commit, 3 buyers T1-T3, 1 unit of stock. All reads land before any write, so every R(Inv) conflicts with every other transaction's later W(Inv), producing a 2-cycle between every pair below -- proof the schedule is not conflict-serializable, which is why demo_1 oversells.
+graph LR
+    T1["T1<br/>R(Inv) then W(Inv)"]
+    T2["T2<br/>R(Inv) then W(Inv)"]
+    T3["T3<br/>R(Inv) then W(Inv)"]
+
+    T1 -->|"R1(Inv) before W2(Inv)"| T2
+    T2 -->|"R2(Inv) before W1(Inv)"| T1
+    T1 -->|"R1(Inv) before W3(Inv)"| T3
+    T3 -->|"R3(Inv) before W1(Inv)"| T1
+    T2 -->|"R2(Inv) & W2(Inv) before W3(Inv)"| T3
+    T3 -->|"R3(Inv) before W2(Inv)"| T2
+
+    classDef cycle fill:#f8d7da,stroke:#842029,color:#000
+    class T1,T2,T3 cycle

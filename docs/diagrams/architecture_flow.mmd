@@ -1,0 +1,29 @@
+flowchart TD
+    Client([Client / Swagger UI])
+    Client --> API["FastAPI checkout endpoints<br/>/checkout/pessimistic, /checkout/optimistic, /checkout/redis"]
+
+    API -->|redis strategy| RedisDecr["Redis atomic DECR<br/>(fast path, no Postgres round-trip)"]
+    RedisDecr -->|remaining < 0| RedisReject["INCR compensate -> 409 Sold out"]
+    RedisDecr -->|stock available| PgInsertRedis["Postgres: INSERT order<br/>(source of truth)"]
+    PgInsertRedis -.->|insert fails| RedisCompensate["INCR compensate Redis counter"]
+
+    API -->|pessimistic strategy| PgLocked["Postgres: SELECT ... FOR UPDATE<br/>on Inventory row, then UPDATE + INSERT"]
+    API -->|optimistic strategy| PgOcc["Postgres: UPDATE Inventory<br/>WHERE version = read_version (OCC)"]
+
+    PgInsertRedis --> OrdersTbl[("orders / inventory tables")]
+    PgLocked --> OrdersTbl
+    PgOcc --> OrdersTbl
+
+    API --> BehaviorLog["log_checkout_attempt()<br/>writes UserBehaviorLog on its own connection<br/>(every attempt: confirmed, rejected, or errored)"]
+    BehaviorLog --> BehaviorTbl[("user_behavior_logs")]
+
+    BehaviorTbl --> BatchJob["scripts/run_bot_scoring.py<br/>(explicit batch job)"]
+    BatchJob --> BotModel["bot_detection.score_sessions()<br/>Isolation Forest over checkout_latency,<br/>session_duration, accounts_per_device,<br/>requests_per_ip_per_min"]
+    BotModel --> FlaggedTbl["writes FlaggedOrder row +<br/>flips Order.status = 'flagged'"]
+    FlaggedTbl --> FlaggedAPI["GET /flagged-orders"]
+
+    OrdersTbl --> HistData["Historical order volume +<br/>data/online_retail.xlsx (UCI Online Retail)"]
+    HistData --> DemandModel["demand_forecast.py<br/>GradientBoostingRegressor<br/>predicts next-period SKU demand"]
+    DemandModel --> SafetyStock["Safety-stock / concurrency-strategy decision"]
+    SafetyStock -->|high predicted volume: use pessimistic locking| API
+    SafetyStock -->|low predicted volume: use OCC| API

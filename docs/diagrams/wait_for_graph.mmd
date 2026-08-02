@@ -1,0 +1,28 @@
+%% Wait-for graphs for app/demos/demo_6_deadlock.py
+%% T1 = txn1_inventory_then_user (locks Inventory, then wants User)
+%% T2 = txn2_user_then_inventory (locks User, then wants Inventory)
+%% Opposite lock order -> classic deadlock (Part A), resolved by
+%% application-level wound-wait so the cycle never forms (Part B).
+graph TB
+
+    subgraph BEFORE["Part A -- deliberate deadlock (Postgres detects it)"]
+        direction LR
+        T1A["T1<br/>holds: Inventory<br/>wants: User"]
+        T2A["T2<br/>holds: User<br/>wants: Inventory"]
+        T1A -->|"waits for"| T2A
+        T2A -->|"waits for"| T1A
+    end
+
+    subgraph AFTER["Part B -- wound-wait prevention (no cycle ever forms)"]
+        direction LR
+        T1B["T1 (older, ts=1)<br/>holds: Inventory<br/>requests: User"]
+        T2B["T2 (younger, ts=2)<br/>held: User -- wounded on conflict<br/>aborts, releases locks"]
+        T1B -.->|"wounds (older beats younger)"| T2B
+        T1B ==>|"acquires User immediately, no wait"| Done["T1 completes successfully"]
+    end
+
+    classDef deadlock fill:#f8d7da,stroke:#842029,color:#000
+    classDef resolved fill:#d1e7dd,stroke:#0f5132,color:#000
+    class T1A,T2A deadlock
+    class T1B,Done resolved
+    class T2B deadlock
