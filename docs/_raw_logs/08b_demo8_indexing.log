@@ -1,0 +1,148 @@
+Dataset: 200,000 orders, 50,000 users (hottest device_fingerprint shared by 499 accounts)
+Primary sale for these demos: e17f71e0-daf7-4b12-bdc9-d6d819f4e62e
+
+==============================================================================
+Query 1 -- all orders for sale e17f71e0... in the last 60s (composite B+ tree)
+==============================================================================
+
+-- WITH index --
+Sort  (cost=1534.59..1536.29 rows=681 width=44) (actual time=0.077..0.078 rows=1 loops=1)
+  Sort Key: created_at DESC
+  Sort Method: quicksort  Memory: 25kB
+  Buffers: shared hit=7
+  ->  Bitmap Heap Scan on orders  (cost=27.40..1502.55 rows=681 width=44) (actual time=0.013..0.014 rows=1 loops=1)
+        Recheck Cond: ((sale_id = 'e17f71e0-daf7-4b12-bdc9-d6d819f4e62e'::uuid) AND (created_at >= '2026-08-02 13:10:30.243005+00'::timestamp with time zone))
+        Heap Blocks: exact=1
+        Buffers: shared hit=4
+        ->  Bitmap Index Scan on ix_orders_sale_id_created_at  (cost=0.00..27.23 rows=681 width=0) (actual time=0.008..0.008 rows=1 loops=1)
+              Index Cond: ((sale_id = 'e17f71e0-daf7-4b12-bdc9-d6d819f4e62e'::uuid) AND (created_at >= '2026-08-02 13:10:30.243005+00'::timestamp with time zone))
+              Buffers: shared hit=3
+Planning:
+  Buffers: shared hit=17
+Planning Time: 0.208 ms
+Execution Time: 0.148 ms
+
+Dropping ix_orders_sale_id_created_at to show the baseline plan...
+
+-- WITHOUT index --
+Gather Merge  (cost=5063.15..5109.38 rows=402 width=44) (actual time=10.360..14.604 rows=1 loops=1)
+  Workers Planned: 1
+  Workers Launched: 1
+  Buffers: shared hit=2338
+  ->  Sort  (cost=4063.14..4064.14 rows=402 width=44) (actual time=7.579..7.580 rows=0 loops=2)
+        Sort Key: created_at DESC
+        Sort Method: quicksort  Memory: 25kB
+        Buffers: shared hit=2338
+        Worker 0:  Sort Method: quicksort  Memory: 25kB
+        ->  Parallel Seq Scan on orders  (cost=0.00..4045.75 rows=402 width=44) (actual time=2.907..7.507 rows=0 loops=2)
+              Filter: ((created_at >= '2026-08-02 13:10:30.243005+00'::timestamp with time zone) AND (sale_id = 'e17f71e0-daf7-4b12-bdc9-d6d819f4e62e'::uuid))
+              Rows Removed by Filter: 100002
+              Buffers: shared hit=2281
+Planning:
+  Buffers: shared hit=30
+Planning Time: 0.164 ms
+Execution Time: 14.631 ms
+
+Recreating ix_orders_sale_id_created_at so the demo is repeatable...
+==============================================================================
+Query 2 -- accounts sharing device_fingerprint 4a3d06a4... (hash index)
+==============================================================================
+
+-- WITH index --
+Aggregate  (cost=812.41..812.42 rows=1 width=8) (actual time=1.248..1.250 rows=1 loops=1)
+  Buffers: shared hit=388
+  ->  Bitmap Heap Scan on users  (cost=19.87..811.17 rows=499 width=0) (actual time=0.300..1.204 rows=499 loops=1)
+        Recheck Cond: ((device_fingerprint)::text = '4a3d06a4-011b-44a9-9e62-04b6b0324ecf'::text)
+        Heap Blocks: exact=385
+        Buffers: shared hit=388
+        ->  Bitmap Index Scan on ix_users_device_fingerprint_hash  (cost=0.00..19.74 rows=499 width=0) (actual time=0.120..0.121 rows=499 loops=1)
+              Index Cond: ((device_fingerprint)::text = '4a3d06a4-011b-44a9-9e62-04b6b0324ecf'::text)
+              Buffers: shared hit=3
+Planning:
+  Buffers: shared hit=88
+Planning Time: 0.333 ms
+Execution Time: 1.289 ms
+
+Dropping ix_users_device_fingerprint_hash to show the baseline plan...
+
+-- WITHOUT index --
+Aggregate  (cost=1515.55..1515.56 rows=1 width=8) (actual time=4.978..4.980 rows=1 loops=1)
+  Buffers: shared hit=889
+  ->  Seq Scan on users  (cost=0.00..1514.38 rows=469 width=0) (actual time=0.023..4.933 rows=499 loops=1)
+        Filter: ((device_fingerprint)::text = '4a3d06a4-011b-44a9-9e62-04b6b0324ecf'::text)
+        Rows Removed by Filter: 49531
+        Buffers: shared hit=889
+Planning:
+  Buffers: shared hit=13
+Planning Time: 0.190 ms
+Execution Time: 5.002 ms
+
+Recreating ix_users_device_fingerprint_hash so the demo is repeatable...
+==============================================================================
+Case study -- units sold in the first 60s of a sale, by bot-flag status
+(3-way join: orders x order_items x flagged_orders)
+==============================================================================
+Sort  (cost=13609.13..13629.13 rows=8000 width=40) (actual time=79.457..84.041 rows=4 loops=1)
+  Sort Key: (sum(oi.quantity)) DESC
+  Sort Method: quicksort  Memory: 25kB
+  Buffers: shared hit=5675 read=257
+  ->  Finalize HashAggregate  (cost=13010.50..13090.50 rows=8000 width=40) (actual time=78.800..83.412 rows=4 loops=1)
+        Group Key: (CASE WHEN (fo.id IS NULL) THEN 'clean'::character varying ELSE fo.review_status END)
+        Batches: 1  Memory Usage: 409kB
+        Buffers: shared hit=5672 read=257
+        ->  Gather  (cost=11250.50..12930.50 rows=16000 width=40) (actual time=78.326..83.325 rows=12 loops=1)
+              Workers Planned: 2
+              Workers Launched: 2
+              Buffers: shared hit=5672 read=257
+              ->  Partial HashAggregate  (cost=10250.50..10330.50 rows=8000 width=40) (actual time=73.792..73.840 rows=4 loops=3)
+                    Group Key: CASE WHEN (fo.id IS NULL) THEN 'clean'::character varying ELSE fo.review_status END
+                    Batches: 1  Memory Usage: 409kB
+                    Buffers: shared hit=5672 read=257
+                    Worker 0:  Batches: 1  Memory Usage: 409kB
+                    Worker 1:  Batches: 1  Memory Usage: 409kB
+                    ->  Hash Left Join  (cost=3472.55..10175.00 rows=15099 width=36) (actual time=15.706..67.845 rows=34318 loops=3)
+                          Hash Cond: (o.id = fo.order_id)
+                          Buffers: shared hit=5672 read=257
+                          ->  Parallel Hash Join  (cost=3196.55..9859.37 rows=15099 width=20) (actual time=12.754..58.039 rows=34318 loops=3)
+                                Hash Cond: (oi.order_id = o.id)
+                                Buffers: shared hit=5384 read=257
+                                ->  Parallel Seq Scan on order_items oi  (cost=0.00..6225.59 rows=166559 width=20) (actual time=0.036..21.854 rows=133247 loops=3)
+                                      Buffers: shared hit=4560
+                                ->  Parallel Hash  (cost=3063.23..3063.23 rows=10665 width=16) (actual time=12.381..12.383 rows=17183 loops=3)
+                                      Buckets: 65536 (originally 32768)  Batches: 1 (originally 1)  Memory Usage: 3232kB
+                                      Buffers: shared hit=796 read=257
+                                      ->  Parallel Bitmap Heap Scan on orders o  (cost=595.59..3063.23 rows=10665 width=16) (actual time=2.400..5.792 rows=17183 loops=3)
+                                            Recheck Cond: ((sale_id = 'e17f71e0-daf7-4b12-bdc9-d6d819f4e62e'::uuid) AND (created_at >= '2026-08-02 13:01:58.576039+00'::timestamp with time zone) AND (created_at < '2026-08-02 13:02:58.576039+00'::timestamp with time zone))
+                                            Heap Blocks: exact=271
+                                            Buffers: shared hit=796 read=257
+                                            ->  Bitmap Index Scan on ix_orders_sale_id_created_at  (cost=0.00..591.06 rows=18131 width=0) (actual time=5.865..5.865 rows=51549 loops=1)
+                                                  Index Cond: ((sale_id = 'e17f71e0-daf7-4b12-bdc9-d6d819f4e62e'::uuid) AND (created_at >= '2026-08-02 13:01:58.576039+00'::timestamp with time zone) AND (created_at < '2026-08-02 13:02:58.576039+00'::timestamp with time zone))
+                                                  Buffers: shared read=257
+                          ->  Hash  (cost=176.00..176.00 rows=8000 width=42) (actual time=2.881..2.882 rows=8000 loops=3)
+                                Buckets: 8192  Batches: 1  Memory Usage: 643kB
+                                Buffers: shared hit=288
+                                ->  Seq Scan on flagged_orders fo  (cost=0.00..176.00 rows=8000 width=42) (actual time=0.023..1.145 rows=8000 loops=3)
+                                      Buffers: shared hit=288
+Planning:
+  Buffers: shared hit=196 read=3
+Planning Time: 0.930 ms
+Execution Time: 84.163 ms
+
+Confirmed: the sale_id + created_at filter is applied directly on the
+  orders scan node (->  Parallel Bitmap Heap Scan on orders o  (cost=595.59..3063.23 rows=10665 width=16) (actual time=2.400..5.792 rows=17183 loops=3)) -- pushed down BEFORE the joins to
+  order_items/flagged_orders, matching the design doc's selection-before-join heuristic.
+
+Query result:
+            clean: 198071 units
+    confirmed_bot: 2932 units
+          cleared: 2714 units
+          pending: 2598 units
+
+==============================================================================
+SECTION 6 SUMMARY -- paste directly into your report
+==============================================================================
+
+| Query | Index present (scan, time) | Index dropped (scan, time) | Speedup |
+|---|---|---|---|
+| Query 1 -- all orders for sale e17f71e0... in the last 60s (composite B+ tree) | Bitmap Index Scan, 0.15 ms | Seq Scan, 14.63 ms | 98.9x |
+| Query 2 -- accounts sharing device_fingerprint 4a3d06a4... (hash index) | Bitmap Index Scan, 1.29 ms | Seq Scan, 5.00 ms | 3.9x |

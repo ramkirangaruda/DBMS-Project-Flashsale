@@ -1,0 +1,5 @@
+Bot/Scalper Detection -- real-data scoring pass
+============================================================
+Sessions scored: 40
+Flagged as anomalous: 4
+  ...of which tied to a real (successful) order and written to FlaggedOrder: 0

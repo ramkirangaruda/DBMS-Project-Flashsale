@@ -1,0 +1,28 @@
+[
+  {
+    "order_id": "bb9853f5-1135-4b3f-ab12-18a9596ebd04",
+    "anomaly_score": 0.0222,
+    "review_status": "pending"
+  },
+  {
+    "order_id": "bdedd844-e41a-4708-ab56-06165d37fff9",
+    "anomaly_score": 0.8806,
+    "review_status": "pending"
+  },
+  {
+    "order_id": "e54b4e5d-8fa7-4e61-a3bb-45725eb4d308",
+    "anomaly_score": 0.5524,
+    "review_status": "pending"
+  },
+  {
+    "order_id": "b738f053-c3c7-457a-8f5e-463052324e9e",
+    "anomaly_score": 0.892,
+    "review_status": "pending"
+  },
+  {
+    "order_id": "a6dd2cb1-534b-486c-b656-0eeb679d0aad",
+    "anomaly_score": 0.8094,
+    "review_status": "pending"
+  }
+]
+... total 50 rows returned (LIMIT 50)

@@ -1,0 +1,14 @@
+Firing 8 concurrent checkout attempts at 1 unit of stock (SELECT FOR UPDATE)...
+
+  buyer 0: CONFIRMED order 18b03462-62a7-4623-a774-0531ca85f488
+  buyer 1: REJECTED (no stock)
+  buyer 2: REJECTED (no stock)
+  buyer 3: REJECTED (no stock)
+  buyer 4: REJECTED (no stock)
+  buyer 5: REJECTED (no stock)
+  buyer 6: REJECTED (no stock)
+  buyer 7: REJECTED (no stock)
+
+Stock available was 1. Confirmed orders: 1 (elapsed 0.427s)
+CORRECT -- exactly 1 confirmed, no oversell, because FOR UPDATE serialized access.
+Note the elapsed time: locking serializes the 8 attempts, so they queue up.

@@ -34,7 +34,11 @@ THINK_TIME = 0.03       # simulated per-request work, seconds
 # buyers instead of inventing a separate one.
 BOT_USER_IDS = set(USER_IDS[:6])
 
-r = redis.Redis(host="localhost", port=6379, decode_responses=True)
+r = redis.Redis(
+    host=os.getenv("REDIS_HOST", "localhost"),
+    port=int(os.getenv("REDIS_PORT", "6379")),
+    decode_responses=True,
+)
 
 
 def reset(stock=STOCK):

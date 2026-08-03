@@ -5,6 +5,7 @@ live in a browser/Postman, not just via scripts.
 Run with: venv/bin/uvicorn app.main:app --reload --port 8000
 Then visit http://localhost:8000/docs for interactive API docs.
 """
+import os
 import random
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -23,7 +24,11 @@ app = FastAPI(
     version="1.0",
 )
 
-r = redis.Redis(host="localhost", port=6379, decode_responses=True)
+r = redis.Redis(
+    host=os.getenv("REDIS_HOST", "localhost"),
+    port=int(os.getenv("REDIS_PORT", "6379")),
+    decode_responses=True,
+)
 
 
 def log_checkout_attempt(user_id, sale_id, order_id, page_load_time, checkout_time, ip_address):

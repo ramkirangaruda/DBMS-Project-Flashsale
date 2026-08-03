@@ -1,0 +1,9 @@
+Bot/Scalper Detection -- real-data scoring pass
+============================================================
+Sessions scored: 40
+Flagged as anomalous: 4
+  ...of which tied to a real (successful) order and written to FlaggedOrder: 1
+
+Flagged sessions:
+                            order_id  checkout_latency_ms  session_duration_ms  accounts_per_device  requests_per_ip_per_min  anomaly_score
+70890c58-ee95-4758-936d-a0a194be8235              59110.0                59110                    1                        1       0.011354

@@ -1,0 +1,21 @@
+Benchmark: 40 concurrent buyers competing for 5 units, ~30ms simulated work per request.
+6 of the buyer identities are the bot-cluster users from scripts/seed.py
+(shared device_fingerprint) -- logged with bot-like session timing so
+scripts/run_bot_scoring.py has real anomalies to catch after this runs.
+
+Strategy                                Confirmed  Oversold  Retries  Time(s)    Req/s
+--------------------------------------------------------------------------------------
+Pessimistic (SELECT FOR UPDATE)                 5         0        0    1.372     29.2
+Optimistic (version column)                     5         0      127    0.306    130.5
+Redis atomic DECR                               5         0        0    0.221    181.1
+
+Stock was 5, contested by 40 buyers (8x oversubscribed).
+All three strategies should show 0 oversold (all correct) -- the difference
+is HOW they achieve correctness: queueing (pessimistic), retrying (optimistic),
+or avoiding the DB entirely on the hot path (Redis). This table is the
+centerpiece result for the report -- paste it directly into Section 8.2.
+
+Note: only the LAST strategy run above (Redis) is the one whose orders/logs
+survive in the database afterward -- each run_strategy() call resets state for
+the next one. Run `python -m scripts.run_bot_scoring` right after this script
+finishes to score that final batch while it's still in the database.
