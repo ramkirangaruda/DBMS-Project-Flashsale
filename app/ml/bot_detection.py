@@ -102,7 +102,7 @@ def train_and_evaluate():
     print("it was never shown to the model during training.")
 
 
-def score_sessions(db, contamination=0.1, min_sessions=20):
+def score_sessions(db, contamination=0.25, min_sessions=20):
     """
     Batch-scores REAL UserBehaviorLog rows (as opposed to train_and_evaluate()'s
     synthetic demo data), and writes results back to FlaggedOrder / Order.status.
@@ -126,6 +126,18 @@ def score_sessions(db, contamination=0.1, min_sessions=20):
     row to otherwise. Rejected/failed attempts are still scored as part of
     the batch (their behavior contributes to what "normal" looks like) but
     can't themselves be flagged in FlaggedOrder.
+
+    `contamination` defaults higher here (0.25) than in train_and_evaluate()'s
+    synthetic harness (0.1), because it means different things in the two
+    places. The synthetic set is 10% bots BY CONSTRUCTION, so 0.1 is exactly
+    right there. Real scored batches are not: a demo_5_benchmark burst is ~30%
+    shared-device-cluster sessions (12 of 40), and contamination is a hard cap
+    on how many rows IsolationForest will label anomalous. Leaving it at 0.1
+    capped this path at 4 flags over a 40-session batch while only ~5 sessions
+    in that batch have an order_id at all, so whether any flag landed on a
+    flaggable session was close to a coin toss -- the pass would routinely
+    write zero FlaggedOrder rows and leave GET /flagged-orders empty. 0.25
+    sizes the cap to the traffic actually being scored.
     """
     query = """
         SELECT

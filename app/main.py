@@ -29,7 +29,7 @@ app = FastAPI(
 
 r = redis.Redis(
     host=os.getenv("REDIS_HOST", "localhost"),
-    port=int(os.getenv("REDIS_PORT", "6379")),
+    port=int(os.getenv("REDIS_PORT", "6390")),  # matches docker-compose.yml (6390:6379)
     decode_responses=True,
 )
 
@@ -200,6 +200,22 @@ def checkout_redis(
     key = f"stock:{sale_id}"
     order_id = None
     try:
+        # Seed the counter from PostgreSQL the first time we see this sale.
+        # Without this the endpoint is permanently "sold out" for any sale
+        # created by scripts/seed.py: DECR on a missing key starts at -1, so
+        # every request fails the `remaining < 0` check even though Postgres
+        # still has stock. SET NX is atomic, so concurrent first-requests
+        # cannot double-initialize -- only the first one writes, and the
+        # losers fall through to the DECR below against that same value.
+        if not r.exists(key):
+            inv = db.execute(
+                text("SELECT total_stock - reserved_stock FROM inventory WHERE sale_id = :sid"),
+                {"sid": sale_id},
+            ).fetchone()
+            if not inv:
+                raise HTTPException(404, "Sale not found")
+            r.set(key, max(0, inv[0]), nx=True)
+
         remaining = r.decr(key)
         if remaining < 0:
             r.incr(key)

@@ -63,8 +63,13 @@ pip install -r requirements.txt
 python -m scripts.seed         # creates tables, seeds demo data
 ```
 
-Set environment variables if your Postgres isn't on localhost defaults
-(`POSTGRES_HOST`, `POSTGRES_PASSWORD`, etc. — see `app/database.py`).
+No environment variables needed for the standard setup: `docker-compose.yml`
+publishes Postgres on **5435** and Redis on **6390** (deliberately off the
+stock 5432/6379 so it can't collide with — or silently connect to — another
+Postgres/Redis already running on your machine), and `app/database.py` /
+`app/main.py` default to those same ports. Override with `POSTGRES_HOST`,
+`POSTGRES_PORT`, `POSTGRES_PASSWORD`, `REDIS_HOST`, `REDIS_PORT` if your
+setup differs.
 
 To train `demand_forecast.py` on real data (the default; see Section 10.1
 below), download the UCI "Online Retail" dataset and save it exactly here:
@@ -100,7 +105,16 @@ python -m scripts.run_bot_scoring         # scores the REAL sessions demo_5_benc
 ```
 
 Each script resets its own test data, so they can be run in any order or
-repeatedly for a live demo.
+repeatedly for a live demo. Two things worth knowing:
+
+- `scripts/seed.py` resets the **whole** schema (it TRUNCATEs every table),
+  so re-running it also clears `scripts/seed_large.py`'s ~200k synthetic
+  orders. Re-run `python -m scripts.seed_large` before `demo_8_indexing.py`
+  if you've re-seeded since. `scripts/seed_large.py` is the narrower one — it
+  only removes its own tagged data and leaves `seed.py`'s sale alone.
+- `scripts/seed.py` also issues new UUIDs each run and rewrites
+  `scripts/seed_ids.py`, so anything holding an old `sale_id` (a browser tab
+  on `/docs`, a saved curl command) needs the new one.
 
 ## Sample result actually produced by demo_5_benchmark.py
 
@@ -204,24 +218,38 @@ scoring → FlaggedOrder → `/flagged-orders`**.
 
 Verified live, end to end: after running `demo_5_benchmark.py` (40
 buyers, 6 from the bot cluster) followed by `run_bot_scoring.py`, the
-scoring pass found 4 anomalous sessions in that batch, 1 tied to a real
+scoring pass found 10 anomalous sessions in that batch, 2 tied to a real
 successful order:
 
 ```
 Flagged sessions:
                             order_id  checkout_latency_ms  session_duration_ms  accounts_per_device  requests_per_ip_per_min  anomaly_score
-09656e39-af29-41ec-92c8-f703692acc07                  58.0                   58                    6                       12       0.047494
+88e24e0f-c0c2-4ec0-960f-9bc06a0eb44c              12730.0                12730                    1                        2       0.072565
+b501a886-c22f-4168-935f-4dfcfaf19b03                289.0                  289                    6                       12       0.009310
 ```
 
-`accounts_per_device=6` and `requests_per_ip_per_min=12` are exactly the
-bot-cluster signature (6 accounts sharing one fingerprint, all hitting
-checkout from the one shared bot IP within the same minute). That order's
-`status` flipped to `flagged` in the database, and `GET /flagged-orders`
-returned it as the most recent row -- confirmed by curling the endpoint
-directly against a running `uvicorn` instance. A checkout hit directly
-against `/checkout/pessimistic` (not through the benchmark script) was
-also confirmed to write its own `UserBehaviorLog` row correctly, so both
-paths into the log table work.
+The second row is exactly the bot-cluster signature —
+`accounts_per_device=6` and `requests_per_ip_per_min=12` (6 accounts
+sharing one fingerprint, all hitting checkout from the one shared bot IP
+within the same minute), with a 289ms session. Both orders' `status`
+flipped to `flagged` in the database, and `GET /flagged-orders` returned
+both — confirmed by curling the endpoint directly against a running
+`uvicorn` instance. Checkouts hit directly against `/checkout/pessimistic`,
+`/checkout/optimistic` and `/checkout/redis` (not through the benchmark
+script) were also confirmed to write their own `UserBehaviorLog` rows, so
+both paths into the log table work.
+
+**Read the output honestly, though:** Isolation Forest is unsupervised, so
+"anomalous" means *unusual within this batch in any direction*, not
+"definitely a bot". The first row above is a 12.7-second session from a
+single-account device — a slow human, i.e. a false positive — and which
+specific sessions get flagged varies from run to run. What is stable is
+that the pass writes real `FlaggedOrder` rows tied to real `Order` ids
+(verified over 5 consecutive demo_5 → run_bot_scoring cycles: 1, 2, 2, 1,
+1 rows). Don't claim a precision/recall number for this real-data path in
+your report — there are no ground-truth bot labels for it. The 83% recall
+figure belongs only to the synthetic harness, which has labels by
+construction.
 
 ## Running the API
 

@@ -1,0 +1,14 @@
+Firing 8 concurrent checkout attempts at 1 unit of stock (Redis atomic DECR)...
+
+  buyer 0: CONFIRMED order f9971a8c-a480-45f3-a70c-0525880cfc5b
+  buyer 1: REJECTED (no stock, Redis fast-path)
+  buyer 2: REJECTED (no stock, Redis fast-path)
+  buyer 3: REJECTED (no stock, Redis fast-path)
+  buyer 4: REJECTED (no stock, Redis fast-path)
+  buyer 5: REJECTED (no stock, Redis fast-path)
+  buyer 6: REJECTED (no stock, Redis fast-path)
+  buyer 7: REJECTED (no stock, Redis fast-path)
+
+Stock available was 1. Confirmed orders: 1 (elapsed 0.034s)
+CORRECT -- exactly 1 confirmed. Notice this was the fastest of the three
+approaches, because most 'sold out' rejections never touched PostgreSQL at all.

@@ -1,0 +1,42 @@
+==============================================================================
+Section 8.5 -- Multi-Granularity Locking
+==============================================================================
+Admin fires a table-level ACCESS EXCLUSIVE lock ('pause the sale') while
+3 ordinary checkouts try to take row-level FOR UPDATE locks.
+
+While the admin lock is held, here's what Postgres itself reports as blocked:
+
+  pg_locks JOIN pg_class, filtered to the inventory table, taken WHILE checkouts are blocked:
+  locktype   mode                 granted  relname    pid      state
+  ----------------------------------------------------------------------
+  relation   AccessExclusiveLock  True     inventory  618      idle in transaction
+  relation   RowShareLock         False    inventory  619      active
+  relation   RowShareLock         False    inventory  620      active
+  relation   RowShareLock         False    inventory  621      active
+
+Event log (chronological):
+  [admin]      table-level ACCESS EXCLUSIVE lock acquired -- sale is now PAUSED
+  [checkout-2] requesting row-level FOR UPDATE lock on inventory...
+  [checkout-0] requesting row-level FOR UPDATE lock on inventory...
+  [checkout-1] requesting row-level FOR UPDATE lock on inventory...
+  [admin]      released the lock after 1.505s -- sale is RESUMED
+  [checkout-0] lock GRANTED after waiting 1.163s -- was blocked by the admin's table lock
+  [checkout-1] lock GRANTED after waiting 1.165s -- was blocked by the admin's table lock
+  [checkout-2] lock GRANTED after waiting 1.167s -- was blocked by the admin's table lock
+
+  Postgres doesn't literally have locks named IS/IX/S/SIX/X -- but its table lock
+  modes map directly onto that textbook multi-granularity hierarchy:
+
+  Textbook                     Meaning                                         Closest Postgres mode(s)
+  ----------------------------------------------------------------------------------------------------
+  IS  (Intention Share)        intends to read some rows below                 ACCESS SHARE / ROW SHARE
+  IX  (Intention Exclusive)    intends to write some rows below                ROW EXCLUSIVE
+  S   (Share)                  locks the whole object for reading              SHARE
+  SIX (Share + Intention X)    reads the whole object, will write some rows    SHARE ROW EXCLUSIVE
+  X   (Exclusive)              locks the whole object exclusively              EXCLUSIVE / ACCESS EXCLUSIVE
+
+  The key mechanism: SELECT ... FOR UPDATE doesn't jump straight to a row lock --
+  it first takes an implicit ROW SHARE (~IS) lock at the TABLE level, announcing
+  'something below me wants a lock'. A coarse-grained request (like the admin's
+  ACCESS EXCLUSIVE / X) only has to check that ONE table-level lock to know the
+  whole subtree is contested -- it never has to scan every row to find out.

@@ -121,6 +121,11 @@ class Order(Base):
         # N seconds" per Section 6. sale_id leads so equality filters on
         # sale_id can also range-scan created_at within the same index.
         Index("ix_orders_sale_id_created_at", "sale_id", "created_at"),
+        # Referencing side of orders.user_id -> users.id. Postgres indexes the
+        # REFERENCED key automatically but never the referencing column, so
+        # without this a DELETE from users seq-scans orders once per deleted
+        # row. See the note in scripts/seed.py.
+        Index("ix_orders_user_id", "user_id"),
     )
 
 
@@ -134,6 +139,13 @@ class OrderItem(Base):
     price_at_purchase = Column(Numeric(10, 2), nullable=False)
 
     order = relationship("Order", back_populates="items")
+
+    __table_args__ = (
+        # Referencing side of order_items.order_id -> orders.id. This is the
+        # one whose absence made `DELETE FROM orders` effectively never finish
+        # after seed_large.py -- see the note in scripts/seed.py.
+        Index("ix_order_items_order_id", "order_id"),
+    )
 
 
 class UserBehaviorLog(Base):
@@ -153,6 +165,15 @@ class UserBehaviorLog(Base):
     checkout_time = Column(DateTime(timezone=True))
     ip_address = Column(String(64))
     session_duration_ms = Column(Integer)
+
+    __table_args__ = (
+        # Both FK columns indexed for the same reason as ix_orders_user_id:
+        # this table references orders and users, so leaving order_id/user_id
+        # unindexed turns any cleanup DELETE on those parents into a per-row
+        # seq scan of this table.
+        Index("ix_user_behavior_logs_order_id", "order_id"),
+        Index("ix_user_behavior_logs_user_id", "user_id"),
+    )
 
 
 class FlaggedOrder(Base):

@@ -14,6 +14,8 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from sqlalchemy import text
+
 from app.database import Base, engine, SessionLocal
 from app import models
 
@@ -24,16 +26,25 @@ def run():
 
     db = SessionLocal()
     try:
-        # Wipe existing demo data (idempotent re-seed for repeated demo runs)
-        db.query(models.StockAuditLog).delete()
-        db.query(models.FlaggedOrder).delete()
-        db.query(models.UserBehaviorLog).delete()
-        db.query(models.OrderItem).delete()
-        db.query(models.Order).delete()
-        db.query(models.Inventory).delete()
-        db.query(models.FlashSaleEvent).delete()
-        db.query(models.Product).delete()
-        db.query(models.User).delete()
+        # Wipe existing demo data (idempotent re-seed for repeated demo runs).
+        #
+        # TRUNCATE, not per-table DELETE: none of the FK columns pointing at
+        # orders/users (order_items.order_id, user_behavior_logs.order_id,
+        # user_behavior_logs.user_id, orders.user_id) carry an index, so a
+        # `DELETE FROM orders` makes Postgres run a per-row FK check --
+        # "SELECT 1 FROM ONLY order_items WHERE $1 = order_id FOR KEY SHARE" --
+        # that seq-scans the child table once per deleted row. After
+        # scripts/seed_large.py that is 200k orders x a 400k-row child table
+        # (whose freshly-deleted rows are still there as un-vacuumed dead
+        # tuples), which does not finish in any reasonable time. TRUNCATE
+        # drops the underlying files instead, so it is O(1) in row count and
+        # skips per-row FK checks entirely.
+        db.execute(text(
+            "TRUNCATE TABLE "
+            "stock_audit_log, flagged_orders, user_behavior_logs, order_items, "
+            "orders, inventory, flash_sale_events, products, users "
+            "RESTART IDENTITY CASCADE"
+        ))
         db.commit()
 
         print("Seeding users (including a device-fingerprint cluster for bot demo)...")

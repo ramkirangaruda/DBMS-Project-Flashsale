@@ -36,7 +36,7 @@ BOT_USER_IDS = set(USER_IDS[:6])
 
 r = redis.Redis(
     host=os.getenv("REDIS_HOST", "localhost"),
-    port=int(os.getenv("REDIS_PORT", "6379")),
+    port=int(os.getenv("REDIS_PORT", "6390")),  # matches docker-compose.yml (6390:6379)
     decode_responses=True,
 )
 

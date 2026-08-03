@@ -1,0 +1,45 @@
+==============================================================================
+Section 8.3 -- Timestamp Ordering (Basic T/O + Thomas's Write Rule)
+==============================================================================
+Scenario: 3 overlapping checkouts race for the LAST unit of stock.
+T1, T2, T3 get logical timestamps in start order (1, 2, 3), but network
+delay means they don't execute in that order -- exactly the mismatch
+between issue-order and arrival-order that T/O exists to police.
+
+Timestamps assigned at start: T1=1  T2=2  T3=3
+
+Step 1: T2 checks stock (TO-gated read).
+  [T2 TS=2] READ   -> ALLOWED   R-TS updated to 2; sees 1 unit(s) available
+
+Step 2: T3 goes straight to checkout -- it's working off stock info from
+        an earlier page load, not a fresh TO-gated read -- and writes directly.
+  [T3 TS=3] WRITE  -> ALLOWED   W-TS updated to 3; unit reserved
+
+Step 3: T2 now tries to complete its checkout (write), based on the
+        availability it saw back in Step 1 -- but T3 has since sold the unit.
+  [T2 TS=2] WRITE  -> SKIPPED   TS(2) < W-TS(3) but no reader saw a TS in between -- Thomas's Write Rule: obsolete write ignored, no rollback needed
+
+Step 4: T1 finally arrives (it was the slowest) and tries to check stock.
+  [T1 TS=1] READ   -> REJECTED  TS(1) < W-TS(3) -- would read a value already overwritten by a later txn
+
+==============================================================================
+Without Thomas's Write Rule, Step 3 would have gone differently:
+==============================================================================
+  [T2 TS=2] WRITE  -> REJECTED  TS(2) < W-TS(3) -- strict Basic T/O aborts T2
+  T2 would have to roll back its ENTIRE transaction and retry from scratch,
+  even though its write could never have had any effect once T3 committed.
+  Thomas's Write Rule recognizes that (no reader's TS fell between T2's and
+  T3's) and just drops the stale write instead of paying for a full abort.
+
+Final inventory state: total_stock=1, reserved_stock=1 -- exactly 1 unit sold (to T3), no oversell, and T2 avoided a wasted rollback.
+
+==============================================================================
+TRACE TABLE -- paste directly into your report
+==============================================================================
+
+| Txn | TS | Op | R-TS (after) | W-TS (after) | Decision | Why |
+|---|---|---|---|---|---|---|
+| T2 | 2 | READ | 2 | 0 | ALLOWED | R-TS updated to 2; sees 1 unit(s) available |
+| T3 | 3 | WRITE | 2 | 3 | ALLOWED | W-TS updated to 3; unit reserved |
+| T2 | 2 | WRITE | 2 | 3 | SKIPPED | TS(2) < W-TS(3) but no reader saw a TS in between -- Thomas's Write Rule: obsolete write ignored, no rollback needed |
+| T1 | 1 | READ | 2 | 3 | REJECTED | TS(1) < W-TS(3) -- would read a value already overwritten by a later txn |

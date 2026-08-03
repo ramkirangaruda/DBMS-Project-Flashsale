@@ -1,0 +1,27 @@
+Loading real data from C:\Users\ramki\flashsale-engine\data\online_retail.xlsx ...
+Demand Forecasting Model
+==================================================
+Data source: UCI Online Retail dataset (real data)
+Training rows: 132,616   Test rows: 33,154
+Mean Absolute Error: 21.84 units (next_day_qty)
+R^2 score: 0.082
+
+Feature importances:
+  pre_period_demand            0.428
+  day_of_week                  0.282
+  category_popularity          0.188
+  base_price                   0.043
+  discount_pct                 0.038
+  is_weekend                   0.021
+
+Example predictions vs actual (first 5 test rows):
+  predicted=67.1   actual=60.0
+  predicted=79.0   actual=0.0
+  predicted=1.5   actual=0.0
+  predicted=27.6   actual=10.0
+  predicted=18.1   actual=0.0
+
+Use case: predicted next-period demand feeds the safety-stock buffer --
+a SKU predicted at high volume should get pessimistic locking
+(correctness under heavy contention); a SKU predicted at low volume
+can safely use OCC (lower overhead, low contention).

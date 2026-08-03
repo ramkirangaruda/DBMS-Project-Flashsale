@@ -1,0 +1,15 @@
+Firing 8 concurrent checkout attempts at 1 unit of stock (optimistic/version-based)...
+
+  buyer 0: CONFIRMED order 78d5ea5e-ee93-4732-bc46-cc4f3627c90d  (retries: 0)
+  buyer 1: REJECTED (no stock)  (retries: 1)
+  buyer 2: REJECTED (no stock)  (retries: 1)
+  buyer 3: REJECTED (no stock)  (retries: 1)
+  buyer 4: REJECTED (no stock)  (retries: 1)
+  buyer 5: REJECTED (no stock)  (retries: 1)
+  buyer 6: REJECTED (no stock)  (retries: 1)
+  buyer 7: REJECTED (no stock)  (retries: 1)
+
+Stock available was 1. Confirmed orders: 1 (elapsed 0.171s)
+Total retries across all buyers: 7
+CORRECT -- exactly 1 confirmed. But notice the retry count: under this
+much contention, OCC burns CPU/DB round-trips retrying instead of queueing.

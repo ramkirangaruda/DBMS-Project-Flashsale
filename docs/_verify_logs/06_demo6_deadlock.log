@@ -1,0 +1,27 @@
+======================================================================
+PART A: Deliberately causing a deadlock (opposite lock order)
+======================================================================
+  T1: locked Inventory
+  T2: locked User
+  T1: requesting User lock...
+  T2: requesting Inventory lock...
+  T2: got Inventory lock (should not normally reach here in the deadlock case)
+  T1: ABORTED by PostgreSQL deadlock detector: (psycopg2.errors.DeadlockDetected) deadlock detected
+
+PostgreSQL's built-in deadlock detector found the wait-for cycle
+(T1 waits for T2, T2 waits for T1) and aborted one side automatically.
+This is the 'detect after the fact' approach.
+
+======================================================================
+PART B: Wound-wait prevention (application-level, no DB deadlock needed)
+======================================================================
+  T1(older): acquired Inventory
+  T2(younger): acquired User
+  T1(older): acquired User
+  T2(younger): wounded before acquiring Inventory, aborting and releasing held locks
+  T1(older): completed successfully, holding ['Inventory', 'User']
+
+Because T1 is older, T2 was wounded the moment their lock requests
+conflicted -- no cycle ever formed, so there was nothing to detect.
+This is the 'prevent before it happens' approach.
+

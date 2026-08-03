@@ -1,0 +1,19 @@
+     table_name     |            index_name            | index_type |                                           definition                                            
+--------------------+----------------------------------+------------+-------------------------------------------------------------------------------------------------
+ order_items        | ix_order_items_order_id          | btree      | CREATE INDEX ix_order_items_order_id ON public.order_items USING btree (order_id)
+ orders             | ix_orders_sale_id_created_at     | btree      | CREATE INDEX ix_orders_sale_id_created_at ON public.orders USING btree (sale_id, created_at)
+ orders             | ix_orders_user_id                | btree      | CREATE INDEX ix_orders_user_id ON public.orders USING btree (user_id)
+ user_behavior_logs | ix_user_behavior_logs_order_id   | btree      | CREATE INDEX ix_user_behavior_logs_order_id ON public.user_behavior_logs USING btree (order_id)
+ user_behavior_logs | ix_user_behavior_logs_user_id    | btree      | CREATE INDEX ix_user_behavior_logs_user_id ON public.user_behavior_logs USING btree (user_id)
+ users              | ix_users_device_fingerprint_hash | hash       | CREATE INDEX ix_users_device_fingerprint_hash ON public.users USING hash (device_fingerprint)
+(6 rows)
+
+    child_table     | fk_column | parent_table | has_leading_index 
+--------------------+-----------+--------------+-------------------
+ orders             | user_id   | users        | t
+ order_items        | order_id  | orders       | t
+ user_behavior_logs | order_id  | orders       | t
+ user_behavior_logs | user_id   | users        | t
+ flagged_orders     | order_id  | orders       | t
+(5 rows)
+

@@ -26,7 +26,7 @@ from scripts.seed_ids import SALE_ID, USER_IDS
 
 r = redis.Redis(
     host=os.getenv("REDIS_HOST", "localhost"),
-    port=int(os.getenv("REDIS_PORT", "6379")),
+    port=int(os.getenv("REDIS_PORT", "6390")),  # matches docker-compose.yml (6390:6379)
     decode_responses=True,
 )
 STOCK_KEY = f"stock:{SALE_ID}"

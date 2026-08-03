@@ -1,0 +1,13 @@
+Firing 8 concurrent checkout attempts at 1 unit of stock (no locking)...
+
+  buyer 0: CONFIRMED order bf1f170e-bb57-4699-b484-dcfab0fd0485
+  buyer 1: CONFIRMED order d1026a79-2b3b-4101-8786-cfe8dc0a0d62
+  buyer 2: CONFIRMED order 696bebbb-e1f4-4e5e-8a25-8ad7ec935257
+  buyer 3: CONFIRMED order 9908e8f7-fc6d-4dd5-ac7b-51d4e56f2a50
+  buyer 4: CONFIRMED order 9debc9b8-adb9-451f-a68b-296c34e65509
+  buyer 5: CONFIRMED order 613acffb-5732-4012-9b1f-0f62f6152b3c
+  buyer 6: CONFIRMED order 3d10c64d-62f1-48e4-aa6d-b31d5c5cd68a
+  buyer 7: CONFIRMED order 6bce81aa-0733-4eb6-ac54-968b52861d1e
+
+Stock available was 1. Confirmed orders: 8
+OVERSOLD -- this is the lost-update problem in action.

@@ -1,0 +1,38 @@
+### GET /  ->
+{"message":"Flash-Sale Inventory Engine is running.","docs":"/docs","endpoints":["/sales/{sale_id}","/checkout/pessimistic","/checkout/optimistic","/checkout/redis","/flagged-orders","/demand-forecast","/dashboard"]} [HTTP 200]
+
+### GET /sales/bca577e1-e2a7-42ca-8454-690dc73bef83
+{"product":"Limited Edition Sneaker","category":"footwear","sale_price":99.0,"total_stock":5,"reserved_stock":0,"available":5,"version":0} [HTTP 200]
+
+### GET /sales/<bogus> (expect 404)
+{"detail":"Sale not found"} [HTTP 404]
+
+available BEFORE any checkout = 5
+
+### POST /checkout/pessimistic
+{"status":"confirmed","order_id":"340a44ff-d94d-443d-b8bb-340e9d6acf0f","strategy":"pessimistic"} [HTTP 200]
+available AFTER pessimistic = 4
+
+### POST /checkout/optimistic
+{"status":"confirmed","order_id":"492a848e-54f1-4355-b8b7-d348c4b4467f","strategy":"optimistic"} [HTTP 200]
+available AFTER optimistic = 3
+
+### POST /checkout/redis
+{"status":"confirmed","order_id":"0ce5cffa-a184-454f-9825-ea8978e5ffaf","strategy":"redis"} [HTTP 200]
+available AFTER redis = 3   (Redis fast path intentionally does not touch inventory.reserved_stock)
+redis counter stock:bca577e1-e2a7-42ca-8454-690dc73bef83 = 2
+
+### GET /sales/bca577e1-e2a7-42ca-8454-690dc73bef83 (full JSON after 3 checkouts)
+{"product":"Limited Edition Sneaker","category":"footwear","sale_price":99.0,"total_stock":5,"reserved_stock":2,"available":3,"version":1} [HTTP 200]
+
+### GET /flagged-orders (before any scoring pass)
+[] [HTTP 200]
+
+### GET /demand-forecast
+{"source":"UCI Online Retail dataset (real data)","mae":21.84,"r2":0.082,"samples":[{"label":"SKU sample 1","predicted":67.1,"actual":60.0},{"label":"SKU sample 2","predicted":79.0,"actual":0.0},{"label":"SKU sample 3","
+### GET /dashboard
+[HTTP 200] content-type=text/html; charset=utf-8 bytes=7603
+### GET /docs
+[HTTP 200]
+[]
+[HTTP 200]

@@ -1,0 +1,40 @@
+======================================================================
+PART A: ACID atomicity -- WITHOUT a transaction wrapper (broken)
+======================================================================
+reserved_stock before: 0
+  -> reserved_stock incremented and committed
+  -> CRASH before the order INSERT runs
+reserved_stock after 'crash': 1  <-- stock is gone, no order exists for it!
+This is exactly the atomicity violation Section 7 warns about.
+
+======================================================================
+PART A continued: WITH a transaction wrapper (correct)
+======================================================================
+reserved_stock before: 0
+  -> reserved_stock incremented (NOT yet committed)
+  -> CRASH before the order INSERT runs
+  -> ROLLBACK undid the increment automatically
+reserved_stock after rollback: 0  <-- correctly restored
+
+======================================================================
+PART B: Write-ahead log (StockAuditLog) -- deferred vs immediate update
+======================================================================
+WAL entry written (committed='false'): before=0, after=1
+
+-- Scenario 1: DEFERRED UPDATE --
+   The actual data page was never touched before commit, so if we
+   crash now, there's nothing to undo. On restart, recovery only
+   needs to REDO transactions whose WAL entry says committed='true'
+   but whose data change didn't make it to disk yet.
+
+-- Scenario 2: IMMEDIATE UPDATE --
+   The actual data page IS updated before commit (for performance).
+   If we crash before commit, recovery must UNDO using before_value
+   from the WAL. If we crash after commit but before the data page
+   is flushed, recovery must REDO using after_value.
+
+   Data page updated to 1 immediately (before commit)...
+   CRASH -- transaction never committed.
+   Recovery reads WAL: before=0, after=1, committed=false
+   Since committed='false' -> UNDO -> restore reserved_stock to 0
+   reserved_stock after recovery: 0  <-- correctly restored via UNDO
