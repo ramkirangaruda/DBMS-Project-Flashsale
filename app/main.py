@@ -7,16 +7,19 @@ Then visit http://localhost:8000/docs for interactive API docs.
 """
 import os
 import random
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 import redis
 
 from app.database import get_db, Base, engine, SessionLocal
 from app import models
+from app.ml.demand_forecast import get_forecast_sample
 
 app = FastAPI(
     title="Flash-Sale Inventory & Oversell Prevention Engine",
@@ -70,6 +73,10 @@ def log_checkout_attempt(user_id, sale_id, order_id, page_load_time, checkout_ti
 @app.on_event("startup")
 def startup():
     Base.metadata.create_all(bind=engine)
+    # Warm the /demand-forecast cache in the background so the dashboard's
+    # chart doesn't stall a live demo on the first request (training on the
+    # real dataset takes well over a minute).
+    threading.Thread(target=get_forecast_sample, daemon=True).start()
 
 
 @app.get("/")
@@ -77,7 +84,7 @@ def root():
     return {
         "message": "Flash-Sale Inventory Engine is running.",
         "docs": "/docs",
-        "endpoints": ["/sales/{sale_id}", "/checkout/pessimistic", "/checkout/optimistic", "/checkout/redis", "/flagged-orders"],
+        "endpoints": ["/sales/{sale_id}", "/checkout/pessimistic", "/checkout/optimistic", "/checkout/redis", "/flagged-orders", "/demand-forecast", "/dashboard"],
     }
 
 
@@ -224,3 +231,18 @@ def flagged_orders(db: Session = Depends(get_db)):
         text("SELECT order_id, anomaly_score, review_status FROM flagged_orders ORDER BY flagged_at DESC LIMIT 50")
     ).fetchall()
     return [{"order_id": str(r_[0]), "anomaly_score": float(r_[1]) if r_[1] else None, "review_status": r_[2]} for r_ in rows]
+
+
+@app.get("/demand-forecast")
+def demand_forecast():
+    """Section 10.1 model, trained once and cached in-process -- see
+    app/ml/demand_forecast.get_forecast_sample(). Backs the /dashboard chart."""
+    return get_forecast_sample()
+
+
+@app.get("/dashboard")
+def dashboard():
+    """Section 11 (optional) -- a single-file live demo dashboard. Not a
+    real deliverable, just polish for showing the system running during
+    the viva. See app/static/dashboard.html."""
+    return FileResponse(os.path.join(os.path.dirname(__file__), "static", "dashboard.html"))

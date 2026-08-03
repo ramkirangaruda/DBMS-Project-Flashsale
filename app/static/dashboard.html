@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Flash-Sale Live Dashboard</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px; background: #0f1420; color: #e6e9ef;
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: #8a93a6; font-size: 13px; margin-bottom: 20px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: #161d2e; border: 1px solid #253049; border-radius: 10px;
+    padding: 16px 18px; grid-column: span 1;
+  }
+  .card.wide { grid-column: 1 / -1; }
+  .card h2 { font-size: 14px; margin: 0 0 12px; color: #aeb7c9; text-transform: uppercase; letter-spacing: .04em; }
+  .sale-input { display: flex; gap: 8px; margin-bottom: 16px; }
+  .sale-input input {
+    flex: 1; background: #0f1420; border: 1px solid #2c3854; color: #e6e9ef;
+    padding: 8px 10px; border-radius: 6px; font-size: 13px;
+  }
+  .sale-input button {
+    background: #3b6fe0; color: white; border: none; border-radius: 6px;
+    padding: 8px 14px; font-size: 13px; cursor: pointer;
+  }
+  .stock-bar { height: 26px; background: #0f1420; border-radius: 6px; overflow: hidden; border: 1px solid #2c3854; }
+  .stock-fill { height: 100%; background: linear-gradient(90deg,#3b6fe0,#5fa8ff); transition: width .4s ease; }
+  .stock-fill.low { background: linear-gradient(90deg,#c0392b,#e74c3c); }
+  .stock-numbers { display: flex; justify-content: space-between; margin-top: 8px; font-size: 13px; color: #aeb7c9; }
+  .big { font-size: 28px; font-weight: 600; color: #fff; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #232d44; }
+  th { color: #8a93a6; font-weight: 500; }
+  .status { padding: 2px 8px; border-radius: 10px; font-size: 11px; }
+  .status.pending { background: #4a3b1a; color: #ffcf6b; }
+  .status.confirmed_bot { background: #4a1a1a; color: #ff8b8b; }
+  .status.cleared { background: #1a3b28; color: #7be69a; }
+  .empty { color: #5c6579; font-size: 13px; padding: 12px 0; }
+  .bars { display: flex; align-items: flex-end; gap: 10px; height: 160px; padding-top: 10px; }
+  .bar-group { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; }
+  .bar-pair { display: flex; gap: 3px; align-items: flex-end; height: 130px; }
+  .bar { width: 10px; border-radius: 2px 2px 0 0; }
+  .bar.actual { background: #5fa8ff; }
+  .bar.predicted { background: #f0a94e; }
+  .bar-label { font-size: 10px; color: #6b7386; margin-top: 6px; }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: #aeb7c9; margin-bottom: 8px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  .meta { font-size: 12px; color: #6b7386; margin-top: 10px; }
+  .err { color: #ff8b8b; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<h1>Flash-Sale Live Dashboard</h1>
+<div class="sub">Polls the running FastAPI app directly. Demo aid only -- see Section 11 of the design doc.</div>
+
+<div class="grid">
+
+  <div class="card">
+    <h2>Live Stock -- Active Sale</h2>
+    <div class="sale-input">
+      <input id="saleIdInput" placeholder="sale_id (from scripts/seed_ids.py)">
+      <button onclick="setSaleId()">Track</button>
+    </div>
+    <div id="stockBody">
+      <div class="empty">Enter a sale_id above to start polling GET /sales/{sale_id}.</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Last 10 Flagged Orders</h2>
+    <div id="flaggedBody"><div class="empty">Loading...</div></div>
+  </div>
+
+  <div class="card wide">
+    <h2>Demand Forecast (Section 10.1) -- predicted vs actual next-day units</h2>
+    <div class="legend">
+      <span><span class="swatch" style="background:#5fa8ff"></span>actual</span>
+      <span><span class="swatch" style="background:#f0a94e"></span>predicted</span>
+    </div>
+    <div id="forecastBody"><div class="empty">Loading...</div></div>
+  </div>
+
+</div>
+
+<script>
+const qs = new URLSearchParams(location.search);
+let saleId = qs.get('sale_id') || '';
+document.getElementById('saleIdInput').value = saleId;
+
+function setSaleId() {
+  saleId = document.getElementById('saleIdInput').value.trim();
+  const url = new URL(location);
+  url.searchParams.set('sale_id', saleId);
+  history.replaceState(null, '', url);
+  pollStock();
+}
+
+async function pollStock() {
+  const el = document.getElementById('stockBody');
+  if (!saleId) return;
+  try {
+    const res = await fetch(`/sales/${saleId}`);
+    if (!res.ok) { el.innerHTML = `<div class="err">Sale not found (HTTP ${res.status})</div>`; return; }
+    const s = await res.json();
+    const pct = s.total_stock > 0 ? Math.max(0, Math.min(100, (s.available / s.total_stock) * 100)) : 0;
+    const lowClass = pct <= 20 ? 'low' : '';
+    el.innerHTML = `
+      <div style="margin-bottom:10px">${s.product} <span style="color:#6b7386">(${s.category || 'n/a'})</span></div>
+      <div class="big">${s.available} / ${s.total_stock} available</div>
+      <div class="stock-bar" style="margin-top:10px"><div class="stock-fill ${lowClass}" style="width:${pct}%"></div></div>
+      <div class="stock-numbers">
+        <span>reserved: ${s.reserved_stock}</span>
+        <span>sale price: $${s.sale_price}</span>
+        <span>version: ${s.version}</span>
+      </div>`;
+  } catch (e) {
+    el.innerHTML = `<div class="err">${e}</div>`;
+  }
+}
+
+async function pollFlagged() {
+  const el = document.getElementById('flaggedBody');
+  try {
+    const res = await fetch('/flagged-orders');
+    const rows = (await res.json()).slice(0, 10);
+    if (!rows.length) { el.innerHTML = '<div class="empty">No flagged orders yet -- run demo_5_benchmark.py then scripts/run_bot_scoring.py.</div>'; return; }
+    el.innerHTML = `<table><thead><tr><th>Order</th><th>Anomaly score</th><th>Status</th></tr></thead><tbody>
+      ${rows.map(r => `<tr>
+        <td title="${r.order_id}">${r.order_id.slice(0, 8)}...</td>
+        <td>${r.anomaly_score ?? '-'}</td>
+        <td><span class="status ${r.review_status}">${r.review_status}</span></td>
+      </tr>`).join('')}
+    </tbody></table>`;
+  } catch (e) {
+    el.innerHTML = `<div class="err">${e}</div>`;
+  }
+}
+
+async function loadForecast() {
+  const el = document.getElementById('forecastBody');
+  try {
+    const res = await fetch('/demand-forecast');
+    const data = await res.json();
+    const samples = data.samples || [];
+    const maxVal = Math.max(1, ...samples.flatMap(s => [s.actual, s.predicted]));
+    const barHeight = v => (Math.max(0, v) / maxVal) * 130;
+    el.innerHTML = `
+      <div class="bars">
+        ${samples.map(s => `
+          <div class="bar-group">
+            <div class="bar-pair">
+              <div class="bar actual" style="height:${barHeight(s.actual)}px" title="actual ${s.actual}"></div>
+              <div class="bar predicted" style="height:${barHeight(s.predicted)}px" title="predicted ${s.predicted}"></div>
+            </div>
+            <div class="bar-label">${s.label.replace('SKU sample ', '#')}</div>
+          </div>`).join('')}
+      </div>
+      <div class="meta">source: ${data.source} &middot; MAE ${data.mae} units &middot; R&sup2; ${data.r2}</div>`;
+  } catch (e) {
+    el.innerHTML = `<div class="err">${e}</div>`;
+  }
+}
+
+pollStock();
+pollFlagged();
+loadForecast();
+setInterval(pollStock, 2000);
+setInterval(pollFlagged, 3000);
+</script>
+</body>
+</html>

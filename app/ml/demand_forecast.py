@@ -23,6 +23,7 @@ automatically and prints a warning; it is not the default path.
 Run with: venv/bin/python -m app.ml.demand_forecast
 """
 import os
+import threading
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import GradientBoostingRegressor
@@ -171,20 +172,16 @@ def load_real_data(path=DATA_PATH, top_n_skus=500, pre_period_days=7):
     return panel[REAL_FEATURE_COLS + [REAL_TARGET_COL]].reset_index(drop=True)
 
 
-def train_and_evaluate(force_synthetic=False):
+def _fit(force_synthetic=False):
+    """Shared training step behind both train_and_evaluate() (prints a full
+    report) and get_forecast_sample() (returns JSON for the live dashboard)."""
     use_real = (not force_synthetic) and os.path.exists(DATA_PATH)
 
     if use_real:
-        print(f"Loading real data from {DATA_PATH} ...")
         df = load_real_data()
         feature_cols, target_col = REAL_FEATURE_COLS, REAL_TARGET_COL
         source_label = "UCI Online Retail dataset (real data)"
     else:
-        if not force_synthetic:
-            print(f"WARNING: {DATA_PATH} not found -- falling back to the SYNTHETIC")
-            print("demo generator (NOT real data). Download the real dataset per the")
-            print("README to train on actual data instead:")
-            print("  https://archive.ics.uci.edu/ml/machine-learning-databases/00352/Online%20Retail.xlsx\n")
         df = generate_synthetic_fallback_data()
         feature_cols, target_col = SYNTHETIC_FEATURE_COLS, SYNTHETIC_TARGET_COL
         source_label = "synthetic demo generator (NOT real data)"
@@ -198,15 +195,34 @@ def train_and_evaluate(force_synthetic=False):
     model.fit(X_train, y_train)
 
     preds = model.predict(X_test)
-    mae = mean_absolute_error(y_test, preds)
-    r2 = r2_score(y_test, preds)
+    return {
+        "model": model, "feature_cols": feature_cols, "target_col": target_col,
+        "source_label": source_label, "X_train": X_train, "X_test": X_test,
+        "y_train": y_train, "y_test": y_test, "preds": preds,
+        "mae": mean_absolute_error(y_test, preds), "r2": r2_score(y_test, preds),
+    }
+
+
+def train_and_evaluate(force_synthetic=False):
+    if (not force_synthetic) and os.path.exists(DATA_PATH):
+        print(f"Loading real data from {DATA_PATH} ...")
+    else:
+        if not force_synthetic:
+            print(f"WARNING: {DATA_PATH} not found -- falling back to the SYNTHETIC")
+            print("demo generator (NOT real data). Download the real dataset per the")
+            print("README to train on actual data instead:")
+            print("  https://archive.ics.uci.edu/ml/machine-learning-databases/00352/Online%20Retail.xlsx\n")
+
+    r = _fit(force_synthetic)
+    model, feature_cols, target_col = r["model"], r["feature_cols"], r["target_col"]
+    preds, y_test = r["preds"], r["y_test"]
 
     print("Demand Forecasting Model")
     print("=" * 50)
-    print(f"Data source: {source_label}")
-    print(f"Training rows: {len(X_train):,}   Test rows: {len(X_test):,}")
-    print(f"Mean Absolute Error: {mae:.2f} units ({target_col})")
-    print(f"R^2 score: {r2:.3f}")
+    print(f"Data source: {r['source_label']}")
+    print(f"Training rows: {len(r['X_train']):,}   Test rows: {len(r['X_test']):,}")
+    print(f"Mean Absolute Error: {r['mae']:.2f} units ({target_col})")
+    print(f"R^2 score: {r['r2']:.3f}")
     print()
     print("Feature importances:")
     for name, imp in sorted(zip(feature_cols, model.feature_importances_), key=lambda x: -x[1]):
@@ -224,6 +240,38 @@ def train_and_evaluate(force_synthetic=False):
     print("can safely use OCC (lower overhead, low contention).")
 
     return model
+
+
+_dashboard_cache = None
+_dashboard_lock = threading.Lock()
+
+
+def get_forecast_sample(n=10):
+    """Trains once (cached for the life of the process) and returns a small
+    JSON-friendly sample of predicted-vs-actual next-day demand, for the
+    live dashboard's chart. Not re-trained per request -- this is a demo
+    aid, not a serving pipeline.
+
+    Guarded by a lock so the startup warm-up thread and an early dashboard
+    request can't both see an empty cache and each kick off their own
+    multi-minute training run at the same time."""
+    global _dashboard_cache
+    if _dashboard_cache is None:
+        with _dashboard_lock:
+            if _dashboard_cache is None:
+                _dashboard_cache = _fit()
+    r = _dashboard_cache
+    preds, y_test = r["preds"], r["y_test"]
+    n = min(n, len(y_test))
+    return {
+        "source": r["source_label"],
+        "mae": round(float(r["mae"]), 2),
+        "r2": round(float(r["r2"]), 3),
+        "samples": [
+            {"label": f"SKU sample {i+1}", "predicted": round(float(preds[i]), 1), "actual": round(float(y_test.values[i]), 1)}
+            for i in range(n)
+        ],
+    }
 
 
 if __name__ == "__main__":
