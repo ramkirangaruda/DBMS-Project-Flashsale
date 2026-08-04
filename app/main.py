@@ -568,13 +568,16 @@ if __name__ == "__main__":
     # Wi-Fi can reach it. uvicorn's own default is localhost-only, which is
     # invisible to every other device on the network.
     #
-    # PORT is overridable because 8000 is a popular port and may already be
-    # taken on your machine (`PORT=8010 python -m app.main`).
+    # Defaults to 8010, not 8000, for the same reason docker-compose.yml
+    # publishes Postgres on 5435 and Redis on 6390: 8000 is a crowded port and
+    # is already taken on this machine by an unrelated container. Landing on
+    # someone else's app is worse than failing to bind, because it looks like
+    # your own frontend "didn't update". Override with PORT=... if you like.
     import uvicorn
 
     uvicorn.run(
         "app.main:app",
         host=os.getenv("HOST", "0.0.0.0"),
-        port=int(os.getenv("PORT", "8000")),
+        port=int(os.getenv("PORT", "8010")),
         reload=False,
     )

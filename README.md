@@ -363,15 +363,22 @@ after any frontend change — the server reads the built files, not the source.
 docker compose start
 python -m scripts.seed                 # canonical users + sale
 python -m scripts.seed_storefront      # storefront catalogue + a drop
-python -m app.main                     # binds 0.0.0.0:8000
+python -m app.main                     # binds 0.0.0.0:8010
 ```
 
 `python -m app.main` binds **0.0.0.0**, not localhost — uvicorn's default is
 localhost-only, which is invisible to every other device on the network.
-Port 8000 is the default; override it if something already has that port:
+
+It listens on **8010**, not 8000, for the same reason `docker-compose.yml`
+publishes Postgres on 5435 and Redis on 6390: 8000 is a crowded port and is
+already taken on this machine by an unrelated `kreis-app` container. That
+matters more than a normal port clash — the server binds fine, but your
+browser silently lands on *someone else's app*, which looks exactly like
+"my frontend didn't update." If a page ever looks wrong, check the port
+first.
 
 ```bash
-PORT=8010 python -m app.main           # on this machine 8000 is taken by kreis-app
+PORT=9000 python -m app.main           # only if you need a different port
 ```
 
 ### 3. Find your LAN IP and share it
@@ -385,7 +392,7 @@ PORT=8010 python -m app.main           # on this machine 8000 is taken by kreis-
 Then text them:
 
 ```
-http://<your-LAN-IP>:8000        e.g. http://192.168.1.20:8000
+http://<your-LAN-IP>:8010        e.g. http://192.168.1.20:8010
 ```
 
 **Everyone has to be on the same Wi-Fi.** Guest networks on many routers
@@ -395,9 +402,9 @@ usually why. Windows may also prompt to allow Python through the firewall
 the first time; allow it on **private** networks.
 
 Not on the same network? Two one-line escape hatches, neither of which needs
-anything built here: `ngrok http 8000` gives you a public HTTPS URL that
+anything built here: `ngrok http 8010` gives you a public HTTPS URL that
 tunnels to your laptop, and [Tailscale](https://tailscale.com) puts everyone
-on a private virtual network so the same `http://<tailscale-IP>:8000` works
+on a private virtual network so the same `http://<tailscale-IP>:8010` works
 from anywhere.
 
 ### 4. Run a round
@@ -416,7 +423,7 @@ together. Three win, everyone else gets "beaten by milliseconds."
 No reseeding needed. Either hit the endpoint:
 
 ```bash
-curl -X POST "http://localhost:8000/admin/reset-sale/<sale_id>?stock=1"
+curl -X POST "http://localhost:8010/admin/reset-sale/<sale_id>?stock=1"
 ```
 
 …or add `?admin=1` to the sale page URL for a hidden reset strip with
@@ -431,8 +438,8 @@ trusted Wi-Fi and is why it's documented rather than defaulted on.
 
 | URL | |
 |---|---|
-| `http://<LAN-IP>:8000/` | the storefront (share this one) |
-| `http://<LAN-IP>:8000/sale/<sale_id>` | a specific sale |
+| `http://<LAN-IP>:8010/` | the storefront (share this one) |
+| `http://<LAN-IP>:8010/sale/<sale_id>` | a specific sale |
 | `/dashboard` | the live metrics dashboard |
 | `/docs` | Swagger |
 | `/api` | JSON endpoint index (moved off `/` so `/` can serve the shop) |
@@ -443,10 +450,10 @@ Hidden switches, never shown in the UI: `?strategy=pessimistic|optimistic|redis`
 ## Running the API
 
 ```bash
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8010
 ```
 
-Visit `http://localhost:8000/docs` for interactive Swagger docs. The
+Visit `http://localhost:8010/docs` for interactive Swagger docs. The
 `sale_id` and `user_id` to paste in are the constants above — they don't
 change when you re-seed, so a saved request keeps working:
 
