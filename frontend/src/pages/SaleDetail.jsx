@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { checkout, fetchSale, serverNow } from '../api.js'
-import { getDemoUserId, getStrategy, money } from '../lib/demo.js'
+import { checkout, fetchSale, resetSale, serverNow } from '../api.js'
+import { getAdminMode, getAdminToken, getDemoUserId, getStrategy, money } from '../lib/demo.js'
 import {
   CountdownPill, DiscountBadge, FlashBadge, PriceRow, ProductArt, StockBar,
   useServerCountdown,
@@ -45,7 +45,11 @@ export default function SaleDetail() {
   // Read once on mount and never surfaced in the UI.
   const strategyRef = useRef(getStrategy())
   const userIdRef = useRef(getDemoUserId())
+  const adminRef = useRef(getAdminMode())
+  const tokenRef = useRef(getAdminToken())
   const prevAvailable = useRef(null)
+  const [resetting, setResetting] = useState(false)
+  const [resetStock, setResetStock] = useState(1)
 
   /* ---- live stock poll (~700ms) so the number visibly ticks down ---- */
   useEffect(() => {
@@ -216,6 +220,47 @@ export default function SaleDetail() {
             <p className="-mt-2 text-center text-xs text-neutral-400">
               Synchronized to the server clock — every device unlocks together.
             </p>
+          )}
+
+          {/* Hidden admin strip -- only rendered with ?admin=1 */}
+          {adminRef.current && (
+            <div className="rounded-xl border border-dashed border-neutral-300 bg-neutral-50 p-3">
+              <div className="mb-2 text-[10px] font-black uppercase tracking-[0.14em] text-neutral-400">
+                Admin · reset stock
+              </div>
+              <div className="flex items-center gap-2">
+                {[1, 3, 5].map((n) => (
+                  <button
+                    key={n}
+                    onClick={() => setResetStock(n)}
+                    className={`h-9 w-9 rounded-lg text-sm font-black transition ${
+                      resetStock === n
+                        ? 'bg-neutral-900 text-white'
+                        : 'bg-white text-neutral-500 ring-1 ring-neutral-200'
+                    }`}
+                  >
+                    {n}
+                  </button>
+                ))}
+                <button
+                  disabled={resetting}
+                  onClick={async () => {
+                    setResetting(true)
+                    try {
+                      await resetSale(saleId, resetStock, tokenRef.current)
+                      setResult(null)
+                    } catch (e) {
+                      alert(e.message)
+                    } finally {
+                      setResetting(false)
+                    }
+                  }}
+                  className="ml-auto rounded-lg bg-neutral-900 px-4 py-2 text-xs font-black uppercase tracking-wider text-white transition hover:bg-neutral-700 disabled:opacity-50"
+                >
+                  {resetting ? 'Resetting…' : `Reset to ${resetStock}`}
+                </button>
+              </div>
+            </div>
           )}
 
           <Link

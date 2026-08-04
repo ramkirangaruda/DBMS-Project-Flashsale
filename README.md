@@ -342,6 +342,104 @@ your report — there are no ground-truth bot labels for it. The 83% recall
 figure belongs only to the synthetic harness, which has labels by
 construction.
 
+## Live demo with friends
+
+The storefront and the API are served by **one process on one port**, so
+there is exactly one link to share and nobody but you ever touches Postgres
+or Redis. Your friends' phones only ever talk to FastAPI.
+
+### 1. Build the storefront once
+
+```bash
+cd frontend && npm install && npm run build && cd ..
+```
+
+That writes `frontend/dist`, which the FastAPI app mounts at `/`. Rebuild
+after any frontend change — the server reads the built files, not the source.
+
+### 2. Start everything
+
+```bash
+docker compose start
+python -m scripts.seed                 # canonical users + sale
+python -m scripts.seed_storefront      # storefront catalogue + a drop
+python -m app.main                     # binds 0.0.0.0:8000
+```
+
+`python -m app.main` binds **0.0.0.0**, not localhost — uvicorn's default is
+localhost-only, which is invisible to every other device on the network.
+Port 8000 is the default; override it if something already has that port:
+
+```bash
+PORT=8010 python -m app.main           # on this machine 8000 is taken by kreis-app
+```
+
+### 3. Find your LAN IP and share it
+
+| OS | Command | What to look for |
+|---|---|---|
+| Windows | `ipconfig` | "IPv4 Address" under your Wi-Fi adapter |
+| macOS | `ipconfig getifaddr en0` | prints it directly |
+| Linux | `ip addr` (or `hostname -I`) | the `inet` on your `wl…` interface |
+
+Then text them:
+
+```
+http://<your-LAN-IP>:8000        e.g. http://192.168.1.20:8000
+```
+
+**Everyone has to be on the same Wi-Fi.** Guest networks on many routers
+have client isolation switched on, which blocks device-to-device traffic
+even though everyone "has internet" — if phones can't load the page, that is
+usually why. Windows may also prompt to allow Python through the firewall
+the first time; allow it on **private** networks.
+
+Not on the same network? Two one-line escape hatches, neither of which needs
+anything built here: `ngrok http 8000` gives you a public HTTPS URL that
+tunnels to your laptop, and [Tailscale](https://tailscale.com) puts everyone
+on a private virtual network so the same `http://<tailscale-IP>:8000` works
+from anywhere.
+
+### 4. Run a round
+
+```bash
+python -m scripts.seed_storefront --drop-in 60 --stock 3
+```
+
+Everyone opens the link, taps into the headline sale, and watches the same
+`3… 2… 1`. The countdown runs off **the server's** clock (every response
+carries `server_time`), so phones whose clocks disagree still unlock
+together. Three win, everyone else gets "beaten by milliseconds."
+
+### 5. Reset between rounds
+
+No reseeding needed. Either hit the endpoint:
+
+```bash
+curl -X POST "http://localhost:8000/admin/reset-sale/<sale_id>?stock=1"
+```
+
+…or add `?admin=1` to the sale page URL for a hidden reset strip with
+1 / 3 / 5 buttons. It resets PostgreSQL **and** the Redis counter together —
+past orders are kept, since only stock needs rewinding.
+
+Set `ADMIN_TOKEN=something` before starting the server to require
+`?token=something` on that endpoint. Unset it stays open, which is fine on a
+trusted Wi-Fi and is why it's documented rather than defaulted on.
+
+### What's where
+
+| URL | |
+|---|---|
+| `http://<LAN-IP>:8000/` | the storefront (share this one) |
+| `http://<LAN-IP>:8000/sale/<sale_id>` | a specific sale |
+| `/dashboard` | the live metrics dashboard |
+| `/docs` | Swagger |
+| `/api` | JSON endpoint index (moved off `/` so `/` can serve the shop) |
+
+Hidden switches, never shown in the UI: `?strategy=pessimistic|optimistic|redis`
+(defaults to `redis`) and `?admin=1`.
+
 ## Running the API
 
 ```bash

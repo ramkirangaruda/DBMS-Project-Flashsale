@@ -14,6 +14,8 @@ from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 import redis
@@ -150,12 +152,19 @@ def checkout_result(status: str, message: str, order_id=None, strategy: str = ""
     return JSONResponse(status_code=http_status, content=body)
 
 
-@app.get("/")
-def root():
+@app.get("/api")
+def api_index():
+    """
+    Endpoint index. Lives at /api rather than / because / now serves the
+    storefront SPA -- someone handed the demo link should land on a shop,
+    not on JSON.
+    """
     return {
         "message": "Flash-Sale Inventory Engine is running.",
         "docs": "/docs",
-        "endpoints": ["/sales", "/sales/{sale_id}", "/checkout/pessimistic", "/checkout/optimistic", "/checkout/redis", "/flagged-orders", "/demand-forecast", "/dashboard"],
+        "storefront": "/",
+        "dashboard": "/dashboard",
+        "endpoints": ["/sales", "/sales/{sale_id}", "/checkout/pessimistic", "/checkout/optimistic", "/checkout/redis", "/admin/reset-sale/{sale_id}", "/flagged-orders", "/demand-forecast", "/dashboard"],
     }
 
 
@@ -433,9 +442,139 @@ def demand_forecast():
     return get_forecast_sample()
 
 
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
+
+
+@app.post("/admin/reset-sale/{sale_id}")
+def reset_sale(sale_id: str, stock: int = 1, token: str = "", db: Session = Depends(get_db)):
+    """
+    Put a sale's stock back so the same drop can be run again, without
+    reseeding the whole database between rounds.
+
+    Resets BOTH sources of truth in one go -- inventory.total_stock /
+    reserved_stock / version in PostgreSQL, and the Redis fast-path counter --
+    because a demo can be run under any of the three checkout strategies and
+    they don't read the same place. Leaving one stale would make the next
+    round start "sold out" for whichever strategy reads it.
+
+    Past orders are deliberately NOT deleted: they're the evidence of what
+    happened, and stock is the only thing that needs rewinding.
+
+    Access: set ADMIN_TOKEN in the environment to require ?token=<value>.
+    Unset (the default) leaves it open, which is fine for the LAN demo this
+    exists for -- the endpoint is unlinked and resets nothing but demo stock.
+    Set the token before exposing the port to anything wider.
+    """
+    if ADMIN_TOKEN and token != ADMIN_TOKEN:
+        return JSONResponse(status_code=403,
+                            content={"status": "failed", "message": "Bad or missing admin token."})
+    if stock < 0:
+        return JSONResponse(status_code=400,
+                            content={"status": "failed", "message": "stock must be >= 0."})
+
+    row = db.execute(
+        text("SELECT id FROM inventory WHERE sale_id = :sid"), {"sid": sale_id}
+    ).fetchone()
+    if not row:
+        return JSONResponse(status_code=404,
+                            content={"status": "failed", "message": "Sale not found."})
+
+    db.execute(
+        text("""
+            UPDATE inventory
+            SET total_stock = :stock, reserved_stock = 0, version = 0
+            WHERE sale_id = :sid
+        """),
+        {"stock": stock, "sid": sale_id},
+    )
+    db.commit()
+
+    redis_ok = True
+    try:
+        r.set(f"stock:{sale_id}", stock)
+    except Exception:                                          # noqa: BLE001
+        redis_ok = False
+
+    return {
+        "status": "ok",
+        "sale_id": sale_id,
+        "total_stock": stock,
+        "reserved_stock": 0,
+        "available": stock,
+        "redis_counter": stock if redis_ok else None,
+        "message": f"Stock reset to {stock}." + ("" if redis_ok else " (Redis unreachable)"),
+        "server_time": datetime.now(timezone.utc).isoformat(),
+    }
+
+
 @app.get("/dashboard")
 def dashboard():
     """Section 11 (optional) -- a single-file live demo dashboard. Not a
     real deliverable, just polish for showing the system running during
     the viva. See app/static/dashboard.html."""
     return FileResponse(os.path.join(os.path.dirname(__file__), "static", "dashboard.html"))
+
+
+# ---------------------------------------------------------------------------
+# Storefront (frontend/dist) served by this same app.
+#
+# MUST stay at the very bottom of this file: a mount at "/" matches
+# everything, and Starlette resolves routes in registration order, so any API
+# route declared *below* it would become unreachable. New endpoints go above.
+#
+# One process on one port serves both the API and the site, which is what
+# makes the LAN demo a single shareable URL -- and, since it is one origin,
+# removes CORS from the picture entirely for the built site.
+# ---------------------------------------------------------------------------
+FRONTEND_DIST = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist"
+)
+
+
+class SPAStaticFiles(StaticFiles):
+    """
+    StaticFiles that falls back to index.html on a 404.
+
+    The storefront is a client-side-routed SPA: a friend opening
+    /sale/<uuid> directly (or refreshing on it) asks the server for a path
+    that has no file behind it. Plain StaticFiles would 404; React needs to
+    receive index.html and resolve the route itself.
+    """
+
+    async def get_response(self, path, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code == 404:
+                return await super().get_response("index.html", scope)
+            raise
+
+
+if os.path.isdir(FRONTEND_DIST):
+    app.mount("/", SPAStaticFiles(directory=FRONTEND_DIST, html=True), name="storefront")
+else:
+    @app.get("/")
+    def storefront_missing():
+        return {
+            "message": "Storefront not built yet.",
+            "fix": "cd frontend && npm install && npm run build",
+            "then": "restart this server -- it serves frontend/dist at /",
+            "api_docs": "/docs",
+        }
+
+
+if __name__ == "__main__":
+    # `python -m app.main` -- binds 0.0.0.0 so phones and laptops on the same
+    # Wi-Fi can reach it. uvicorn's own default is localhost-only, which is
+    # invisible to every other device on the network.
+    #
+    # PORT is overridable because 8000 is a popular port and may already be
+    # taken on your machine (`PORT=8010 python -m app.main`).
+    import uvicorn
+
+    uvicorn.run(
+        "app.main:app",
+        host=os.getenv("HOST", "0.0.0.0"),
+        port=int(os.getenv("PORT", "8000")),
+        reload=False,
+    )

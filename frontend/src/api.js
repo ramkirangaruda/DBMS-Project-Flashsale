@@ -6,7 +6,17 @@
  * vite.config.js). Set VITE_API_BASE to point somewhere else -- e.g.
  * "http://192.168.1.20:8010" when loading the site on a phone.
  */
-const BASE = import.meta.env.VITE_API_BASE ?? '/api'
+/**
+ * In dev, "/api" is proxied to FastAPI by Vite (see vite.config.js).
+ *
+ * In a production build the bundle is served BY FastAPI itself as static
+ * files, so the API lives at the same origin's root and needs no prefix at
+ * all -- which is also why the shared-LAN demo has no CORS to think about.
+ *
+ * VITE_API_BASE overrides both (e.g. pointing a phone at a laptop's IP while
+ * still running the dev server).
+ */
+const BASE = import.meta.env.VITE_API_BASE ?? (import.meta.env.DEV ? '/api' : '')
 
 /* ------------------------------------------------------------------ *
  * Server clock
@@ -93,4 +103,17 @@ export async function checkout({ saleId, userId, strategy }) {
     message: `Checkout failed (HTTP ${res.status}).`,
     strategy: s,
   }
+}
+
+/**
+ * Admin: put a sale's stock back so the same drop can be run again without
+ * reseeding. Reachable only if you know the URL (?admin=1) -- see
+ * getAdminMode() in lib/demo.js.
+ */
+export async function resetSale(saleId, stock, token) {
+  const qs = new URLSearchParams({ stock: String(stock) })
+  if (token) qs.set('token', token)
+  const { res, data } = await request(`/admin/reset-sale/${saleId}?${qs}`, { method: 'POST' })
+  if (!res.ok) throw new Error((data && data.message) || `Reset failed (HTTP ${res.status})`)
+  return data
 }

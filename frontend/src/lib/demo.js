@@ -47,6 +47,31 @@ export function getStrategy() {
   return 'redis'
 }
 
+/**
+ * Admin mode, same hidden-switch pattern as the strategy toggle: only the
+ * person running the demo knows ?admin=1 exists. Reveals a stock-reset
+ * control so a drop can be re-run between rounds without a terminal --
+ * useful when the laptop is plugged into a projector and everyone is
+ * waiting.
+ */
+export function getAdminMode() {
+  try {
+    const q = new URLSearchParams(window.location.search)
+    return q.get('admin') === '1'
+  } catch {
+    return false
+  }
+}
+
+/** Optional ADMIN_TOKEN, passed through as ?token= if the server requires one. */
+export function getAdminToken() {
+  try {
+    return new URLSearchParams(window.location.search).get('token') || ''
+  } catch {
+    return ''
+  }
+}
+
 /** Visual identity for a product category -- gradient + glyph, no photos needed. */
 const CATEGORY_STYLES = {
   earbuds:   { from: 'from-violet-500', to: 'to-fuchsia-600', glyph: '🎧' },
