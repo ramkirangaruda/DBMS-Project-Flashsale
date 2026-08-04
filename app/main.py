@@ -12,7 +12,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import FastAPI, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 import redis
@@ -25,6 +26,29 @@ app = FastAPI(
     title="Flash-Sale Inventory & Oversell Prevention Engine",
     description="DBMS course project -- concurrency control, indexing, recovery, and ML demand/bot detection.",
     version="1.0",
+)
+
+# CORS so the Vite dev server (and phones on the same LAN) can call this API
+# from a different origin.
+#
+# Defaults to "*" DELIBERATELY: this is a local/LAN classroom demo where the
+# whole point is that several people open the storefront on their own devices
+# and race each other. Every endpoint here is unauthenticated demo data, so
+# there is nothing for a permissive origin policy to leak.
+#
+# THIS WOULD NEED LOCKING DOWN FOR ANYTHING REAL: set CORS_ORIGINS to an
+# explicit comma-separated allowlist (e.g. "https://shop.example.com") before
+# exposing this beyond a trusted network, and add authentication before
+# allow_credentials is ever turned on -- "*" plus credentials is exactly the
+# combination browsers refuse, and for good reason.
+CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "*").split(",") if o.strip()]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=False,   # keep False while allow_origins may be "*"
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 r = redis.Redis(
@@ -79,20 +103,126 @@ def startup():
     threading.Thread(target=get_forecast_sample, daemon=True).start()
 
 
+def redis_available(sale_id):
+    """
+    The Redis fast-path counter for a sale, or None if it has never been
+    initialised (nobody has used /checkout/redis for this sale yet) or Redis
+    is unreachable.
+
+    Why the read endpoints consult this at all: /checkout/redis deliberately
+    does NOT write inventory.reserved_stock -- Redis owns stock on the fast
+    path (see the CAP note on that endpoint). So after three Redis purchases
+    PostgreSQL still reports the original reserved_stock, and a storefront
+    reading only SQL would show a stock counter frozen at its starting value
+    while items were visibly selling out. Reporting the counter that actually
+    governs whether the next tap succeeds is the honest number to show.
+
+    Both numbers are returned side by side (`sql_available` / `redis_available`)
+    rather than one silently replacing the other, so the divergence stays
+    visible instead of being papered over.
+    """
+    try:
+        raw = r.get(f"stock:{sale_id}")
+        return max(0, int(raw)) if raw is not None else None
+    except Exception:                                          # noqa: BLE001
+        return None
+
+
+def checkout_result(status: str, message: str, order_id=None, strategy: str = "", http_status: int = 200):
+    """
+    One response shape for all three checkout endpoints, so the storefront can
+    render any outcome without special-casing which strategy produced it:
+
+        {"status": "confirmed" | "sold_out" | "failed",
+         "order_id": str | null, "message": str, "strategy": str}
+
+    HTTP status codes are kept meaningful (200 / 409 / 404 / 500) -- the body
+    is uniform, not the code. The frontend reads response.json() regardless of
+    code and switches on `status`.
+
+    Note this changes only how outcomes are REPORTED. The locking, versioning
+    and Redis logic underneath is untouched.
+    """
+    body = {"status": status, "order_id": str(order_id) if order_id else None,
+            "message": message, "strategy": strategy}
+    if http_status == 200:
+        return body
+    return JSONResponse(status_code=http_status, content=body)
+
+
 @app.get("/")
 def root():
     return {
         "message": "Flash-Sale Inventory Engine is running.",
         "docs": "/docs",
-        "endpoints": ["/sales/{sale_id}", "/checkout/pessimistic", "/checkout/optimistic", "/checkout/redis", "/flagged-orders", "/demand-forecast", "/dashboard"],
+        "endpoints": ["/sales", "/sales/{sale_id}", "/checkout/pessimistic", "/checkout/optimistic", "/checkout/redis", "/flagged-orders", "/demand-forecast", "/dashboard"],
     }
+
+
+@app.get("/sales")
+def list_sales(db: Session = Depends(get_db), include_ended: bool = False):
+    """
+    Every currently active or upcoming flash sale -- what the storefront
+    homepage renders its hero slider and product grid from.
+
+    `server_time` is returned alongside so clients can synchronise their
+    countdowns against THIS clock instead of the device's own. Without it,
+    two phones whose clocks differ by a few seconds would unlock "Buy Now" at
+    visibly different moments and the whole point of the drop (everyone taps
+    at once, and the race is real) would be lost.
+    """
+    rows = db.execute(
+        text("""
+            SELECT f.id, p.name, p.category, p.base_price, f.sale_price,
+                   f.start_time, f.end_time,
+                   i.total_stock, i.reserved_stock
+            FROM flash_sale_events f
+            JOIN products p  ON p.id = f.product_id
+            JOIN inventory i ON i.sale_id = f.id
+            WHERE (:include_ended OR f.end_time > now())
+            ORDER BY f.start_time ASC
+        """),
+        {"include_ended": include_ended},
+    ).fetchall()
+
+    now = datetime.now(timezone.utc)
+    sales = []
+    for sid, name, category, base_price, sale_price, start, end, total, reserved in rows:
+        base = float(base_price or 0)
+        sale = float(sale_price or 0)
+        discount = round((base - sale) / base * 100) if base > 0 else 0
+        sql_avail = max(0, (total or 0) - (reserved or 0))
+        rds_avail = redis_available(sid)
+        available = rds_avail if rds_avail is not None else sql_avail
+        sales.append({
+            "sale_id": str(sid),
+            "product": name,
+            "category": category,
+            "base_price": base,
+            "sale_price": sale,
+            "discount_pct": discount,
+            "start_time": start.isoformat() if start else None,
+            "end_time": end.isoformat() if end else None,
+            "total_stock": total,
+            "reserved_stock": reserved,
+            "available": available,
+            "sql_available": sql_avail,
+            "redis_available": rds_avail,
+            "sold_out": available <= 0,
+            "has_started": bool(start and start <= now),
+            "has_ended": bool(end and end <= now),
+        })
+
+    return {"server_time": now.isoformat(), "count": len(sales), "sales": sales}
 
 
 @app.get("/sales/{sale_id}")
 def get_sale(sale_id: str, db: Session = Depends(get_db)):
     row = db.execute(
         text("""
-            SELECT p.name, p.category, f.sale_price, i.total_stock, i.reserved_stock, i.version
+            SELECT p.name, p.category, p.base_price, f.sale_price,
+                   f.start_time, f.end_time,
+                   i.total_stock, i.reserved_stock, i.version
             FROM flash_sale_events f
             JOIN products p ON p.id = f.product_id
             JOIN inventory i ON i.sale_id = f.id
@@ -102,15 +232,37 @@ def get_sale(sale_id: str, db: Session = Depends(get_db)):
     ).fetchone()
     if not row:
         raise HTTPException(404, "Sale not found")
-    name, category, price, total, reserved, version = row
+    name, category, base_price, price, start, end, total, reserved, version = row
+    now = datetime.now(timezone.utc)
+    base = float(base_price or 0)
+    sale = float(price)
+    sql_avail = total - reserved
+    rds_avail = redis_available(sale_id)
+    available = rds_avail if rds_avail is not None else sql_avail
     return {
+        "sale_id": sale_id,
         "product": name,
         "category": category,
-        "sale_price": float(price),
+        "base_price": base,
+        "sale_price": sale,
+        "discount_pct": round((base - sale) / base * 100) if base > 0 else 0,
+        "start_time": start.isoformat() if start else None,
+        "end_time": end.isoformat() if end else None,
         "total_stock": total,
         "reserved_stock": reserved,
-        "available": total - reserved,
+        # `available` is the number that actually governs the next tap. When
+        # the Redis fast path owns this sale that is the Redis counter; both
+        # are exposed so the divergence stays visible. See redis_available().
+        "available": available,
+        "sql_available": sql_avail,
+        "redis_available": rds_avail,
         "version": version,
+        "sold_out": available <= 0,
+        "has_started": bool(start and start <= now),
+        "has_ended": bool(end and end <= now),
+        # Poll-by-poll clock reference for the storefront countdown -- see
+        # list_sales() for why the server's clock is the only one trusted.
+        "server_time": now.isoformat(),
     }
 
 
@@ -131,11 +283,12 @@ def checkout_pessimistic(
         ).fetchone()
         if not row:
             db.rollback()
-            raise HTTPException(404, "Sale not found")
+            return checkout_result("failed", "Sale not found.", strategy="pessimistic", http_status=404)
         inv_id, total, reserved = row
         if total - reserved <= 0:
             db.rollback()
-            raise HTTPException(409, "Sold out")
+            return checkout_result("sold_out", "Sold out -- someone beat you to it.",
+                                   strategy="pessimistic", http_status=409)
         db.execute(text("UPDATE inventory SET reserved_stock = reserved_stock + 1 WHERE id = :id"), {"id": inv_id})
         order_id = db.execute(
             text(
@@ -145,7 +298,7 @@ def checkout_pessimistic(
             {"uid": user_id, "sid": sale_id},
         ).fetchone()[0]
         db.commit()
-        return {"status": "confirmed", "order_id": str(order_id), "strategy": "pessimistic"}
+        return checkout_result("confirmed", "Order confirmed.", order_id, "pessimistic")
     finally:
         log_checkout_attempt(user_id, sale_id, order_id, page_load_time, checkout_time, ip_address)
 
@@ -165,17 +318,21 @@ def checkout_optimistic(
             {"sid": sale_id},
         ).fetchone()
         if not row:
-            raise HTTPException(404, "Sale not found")
+            return checkout_result("failed", "Sale not found.", strategy="optimistic", http_status=404)
         inv_id, total, reserved, version = row
         if total - reserved <= 0:
-            raise HTTPException(409, "Sold out")
+            return checkout_result("sold_out", "Sold out -- someone beat you to it.",
+                                   strategy="optimistic", http_status=409)
         result = db.execute(
             text("UPDATE inventory SET reserved_stock = reserved_stock + 1, version = version + 1 WHERE id = :id AND version = :v"),
             {"id": inv_id, "v": version},
         )
         if result.rowcount == 0:
             db.rollback()
-            raise HTTPException(409, "Version conflict -- retry")
+            # Not "sold out" -- someone else committed against the same version
+            # first. Distinct status so the UI can invite a retry.
+            return checkout_result("failed", "Version conflict -- another buyer got there first. Try again.",
+                                   strategy="optimistic", http_status=409)
         order_id = db.execute(
             text(
                 "INSERT INTO orders (id, user_id, sale_id, status, created_at) "
@@ -184,7 +341,7 @@ def checkout_optimistic(
             {"uid": user_id, "sid": sale_id},
         ).fetchone()[0]
         db.commit()
-        return {"status": "confirmed", "order_id": str(order_id), "strategy": "optimistic"}
+        return checkout_result("confirmed", "Order confirmed.", order_id, "optimistic")
     finally:
         log_checkout_attempt(user_id, sale_id, order_id, page_load_time, checkout_time, ip_address)
 
@@ -213,7 +370,7 @@ def checkout_redis(
                 {"sid": sale_id},
             ).fetchone()
             if not inv:
-                raise HTTPException(404, "Sale not found")
+                return checkout_result("failed", "Sale not found.", strategy="redis", http_status=404)
             r.set(key, max(0, inv[0]), nx=True)
 
         # DELIBERATE CAP TRADE-OFF -- NOT AN OVERSIGHT.
@@ -237,7 +394,8 @@ def checkout_redis(
         remaining = r.decr(key)
         if remaining < 0:
             r.incr(key)
-            raise HTTPException(409, "Sold out (Redis fast-path)")
+            return checkout_result("sold_out", "Sold out -- someone beat you to it by milliseconds.",
+                                   strategy="redis", http_status=409)
         try:
             order_id = db.execute(
                 text(
@@ -247,14 +405,15 @@ def checkout_redis(
                 {"uid": user_id, "sid": sale_id},
             ).fetchone()[0]
             db.commit()
-            return {"status": "confirmed", "order_id": str(order_id), "strategy": "redis"}
+            return checkout_result("confirmed", "Order confirmed.", order_id, "redis")
         except HTTPException:
             raise
         except Exception:
             db.rollback()
             r.incr(key)
             order_id = None
-            raise HTTPException(500, "Order insert failed, compensated Redis counter")
+            return checkout_result("failed", "Order insert failed; Redis counter compensated.",
+                                   strategy="redis", http_status=500)
     finally:
         log_checkout_attempt(user_id, sale_id, order_id, page_load_time, checkout_time, ip_address)
 

@@ -2,6 +2,10 @@
 venv/
 .venv/
 
+# Frontend build artefacts / deps
+frontend/node_modules/
+frontend/dist/
+
 # Python bytecode / caches
 __pycache__/
 *.pyc

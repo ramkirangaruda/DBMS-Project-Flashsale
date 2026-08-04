@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    @apply bg-neutral-50 text-neutral-900 antialiased;
+    /* Stop iOS double-tap zoom from eating rapid Buy Now taps during a drop. */
+    touch-action: manipulation;
+  }
+  /* Countdown / stock digits must not jitter as they tick. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
