@@ -1,6 +1,11 @@
 """
 Batch bot-detection scoring pass over real UserBehaviorLog rows.
 
+PRECONDITION: requires >=20 UserBehaviorLog rows to produce a meaningful
+score -- run demo_5_benchmark (or another checkout demo) first to generate
+enough sessions. Run straight after a fresh seed it will decline and tell
+you so; that is the guard working, not a failure.
+
 Deliberately a separate, explicit step from the checkout endpoints rather
 than an inline per-request check:
   - Isolation Forest needs a reasonably sized batch of sessions to fit

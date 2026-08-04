@@ -216,6 +216,24 @@ def checkout_redis(
                 raise HTTPException(404, "Sale not found")
             r.set(key, max(0, inv[0]), nx=True)
 
+        # DELIBERATE CAP TRADE-OFF -- NOT AN OVERSIGHT.
+        #
+        # This path decrements the Redis counter and never touches
+        # inventory.reserved_stock. Redis is the source of truth for stock on
+        # the fast path; PostgreSQL stays the source of truth for the durable
+        # Order record. The consequence is visible and intended:
+        # GET /sales/{sale_id} reads reserved_stock out of PostgreSQL, so it
+        # does NOT reflect purchases made through this endpoint, and the two
+        # counters are allowed to diverge.
+        #
+        # That divergence is the Section 9 AP-vs-CP trade-off in practice: the
+        # fast path favours availability and partition tolerance (an immediate,
+        # non-blocking answer under flash-sale load, with most "sold out"
+        # rejections never reaching PostgreSQL at all), while the SQL paths
+        # (/checkout/pessimistic, /checkout/optimistic) favour strict
+        # consistency. Reconciling the two counters is out of scope for the
+        # fast path by design -- see demo_4_redis_atomic.py, which behaves the
+        # same way for the same reason.
         remaining = r.decr(key)
         if remaining < 0:
             r.incr(key)

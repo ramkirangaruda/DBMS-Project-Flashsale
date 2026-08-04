@@ -456,6 +456,32 @@ def build():
         "system-wide CAP trade-off, the two-tier design applies a different one to each "
         "responsibility."
     )
+    doc.add_paragraph(
+        "That compensation path is the failure-mode half of the trade-off. The steady-state "
+        "half was directly observed during verification, and it is the more concrete example: "
+        "/sales/{sale_id} does not reflect Redis-path purchases, because reserved_stock lives "
+        "only in PostgreSQL — this divergence is the AP-vs-CP trade-off in practice, not a "
+        "defect. Observed against the canonical demo sale: a successful POST to "
+        "/checkout/redis returned HTTP 200 with a durable order_id, and the Redis counter "
+        "moved from 5 to 4, but inventory.reserved_stock was never touched, so a subsequent "
+        "GET /sales/{sale_id} still reported available = 5. Two stores, two different answers, "
+        "by design."
+    )
+    doc.add_paragraph(
+        "This is the same two-tier split seen from the read side. Redis owns stock on the hot "
+        "path and is tuned for availability and partition tolerance; PostgreSQL owns the "
+        "durable Order record and is tuned for consistency, so no order is ever "
+        "double-fulfilled. The price of applying a different CAP position to each "
+        "responsibility is exactly the divergence above. Reconciling the two counters -- a "
+        "background job replaying Redis decrements into reserved_stock, or folding the SQL "
+        "write into the same unit of work -- is deliberately out of scope for the fast path, "
+        "because doing it synchronously would reintroduce the PostgreSQL round-trip that the "
+        "fast path exists to avoid. The pessimistic and optimistic strategies in Section 8.2 "
+        "are the strongly-consistent alternatives, and the three-way benchmark table is what "
+        "that consistency costs in throughput. The behaviour is commented as intentional at "
+        "both call sites (/checkout/redis in app/main.py and app/demos/demo_4_redis_atomic.py) "
+        "so that it is not mistaken for a missing UPDATE."
+    )
 
     # ---------------- Section 10: ML ----------------
     doc.add_heading("10. Machine Learning Components", level=1)

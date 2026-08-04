@@ -446,6 +446,56 @@ forcing a Postgres insert failure after a successful `DECR`, which none of
 these runs triggered) -- noted here rather than claiming a number that
 wasn't actually observed.
 
+### The CAP trade-off, as actually observed
+
+The compensation path above is the *failure-mode* half of the trade-off.
+The **steady-state** half was directly observed during verification, and it
+is the concrete example worth putting in the report:
+
+**`/sales/{sale_id}` does not reflect Redis-path purchases, because
+`reserved_stock` lives only in PostgreSQL — this divergence is the
+AP-vs-CP trade-off in practice, not a defect.**
+
+Captured live against the running API, against the canonical
+`22222222-2222-2222-2222-222222222222` sale (note `available` before and
+after the checkout):
+
+```
+BEFORE: {"product":"Limited Edition Sneaker",...,"total_stock":5,"reserved_stock":0,"available":5,"version":0}
+
+POST /checkout/redis -> {"status":"confirmed","order_id":"b1f5a521-e1b9-4741-ac26-f8d127ac18b7","strategy":"redis"} [HTTP 200]
+
+AFTER : {"product":"Limited Edition Sneaker",...,"total_stock":5,"reserved_stock":0,"available":5,"version":0}
+redis counter stock:22222222-... = 4      <- moved 5 -> 4
+orders durably in postgres for that user = 1
+```
+
+The order was confirmed and durably written to PostgreSQL, the Redis
+counter went 5 -> 4, and `reserved_stock` did not move — so `/sales`
+still reported `available = 5` afterwards. Two stores, two different
+answers, by design.
+
+This is the same two-tier split described above, seen from the read side.
+Redis owns stock on the hot path and is tuned for **availability and
+partition tolerance**: a client gets an immediate, non-blocking answer
+under flash-sale load, and most "sold out" rejections never reach
+PostgreSQL at all. PostgreSQL owns the durable Order record and is tuned
+for **consistency**: nobody's order is ever double-fulfilled. Rather than
+picking one system-wide CAP position, the design applies a different one to
+each responsibility — and the price of that choice is exactly the
+divergence shown above.
+
+Reconciling the two counters (a background job replaying Redis decrements
+into `reserved_stock`, or making the SQL write part of the same unit of
+work) is deliberately out of scope for the fast path: doing it
+synchronously would reintroduce the PostgreSQL round-trip the fast path
+exists to avoid, which is the whole point. `demo_2_pessimistic.py` and
+`demo_3_optimistic.py` are the strongly-consistent alternatives, and the
+`demo_5_benchmark.py` table is what that consistency costs in throughput.
+The behaviour is commented as intentional at both call sites
+(`app/main.py`'s `/checkout/redis` and `app/demos/demo_4_redis_atomic.py`)
+so it is not mistaken for a missing `UPDATE`.
+
 ---
 
 ## Section 10.1 -- Demand Forecasting (`app/ml/demand_forecast.py`)

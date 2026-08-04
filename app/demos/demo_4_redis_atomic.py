@@ -39,6 +39,20 @@ STOCK_KEY = f"stock:{SALE_ID}"
 def redis_checkout(user_id: str, results: list, index: int):
     # Atomic decrement -- Redis guarantees this is race-free even under
     # massive concurrency, unlike the naive read-then-write in demo_1.
+    #
+    # DELIBERATE CAP TRADE-OFF -- NOT AN OVERSIGHT. Note what this path does
+    # NOT do: it never updates inventory.reserved_stock. Redis is the source
+    # of truth for stock here; PostgreSQL only records the durable Order. So
+    # GET /sales/{sale_id}, which reads reserved_stock out of PostgreSQL,
+    # will not reflect purchases made on this path, and the two counters are
+    # allowed to diverge.
+    #
+    # That is the Section 9 AP-vs-CP trade-off in practice: this path favours
+    # availability and partition tolerance (immediate, non-blocking answers
+    # under flash-sale load), while the SQL strategies in demo_2/demo_3
+    # favour strict consistency. Reconciling the counters is out of scope for
+    # the fast path by design -- app/main.py's /checkout/redis endpoint
+    # behaves identically for the same reason.
     remaining = r.decr(STOCK_KEY)
 
     if remaining < 0:

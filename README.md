@@ -104,6 +104,11 @@ python -m app.demos.demo_10_multigranularity   # expect: checkouts visibly block
 python -m app.ml.demand_forecast          # trains on real data if data/online_retail.xlsx exists,
                                            # else falls back to synthetic with a printed warning
 python -m app.ml.bot_detection            # expect: ~80%+ recall catching synthetic bots (synthetic eval demo)
+
+# run_bot_scoring REQUIRES >=20 UserBehaviorLog rows to produce a meaningful
+# score -- run demo_5_benchmark (or another checkout demo) FIRST to generate
+# enough sessions. On a freshly seeded database it will decline and say so.
+python -m app.demos.demo_5_benchmark      # generates the 40 real sessions to score
 python -m scripts.run_bot_scoring         # scores the REAL sessions demo_5_benchmark just logged --
                                            # expect: at least one flagged session tied to a real order
 ```

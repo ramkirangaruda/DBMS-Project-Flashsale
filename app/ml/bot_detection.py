@@ -156,6 +156,12 @@ def score_sessions(db, contamination=ASSUMED_REAL_SCALPER_RATE, min_sessions=20)
     Batch-scores REAL UserBehaviorLog rows (as opposed to train_and_evaluate()'s
     synthetic demo data), and writes results back to FlaggedOrder / Order.status.
 
+    PRECONDITION: requires >=20 UserBehaviorLog rows (`min_sessions`) to
+    produce a meaningful score -- run demo_5_benchmark (or another checkout
+    demo) first to generate enough sessions. Called against a freshly seeded
+    database with no checkout traffic yet, this returns an empty frame and
+    prints what to run; that is the guard working, not a failure.
+
     Feature engineering, computed from actual data instead of synthetic columns:
       - checkout_latency_ms:     checkout_time - page_load_time, per session
       - session_duration_ms:     as logged (falls back to checkout_latency_ms
