@@ -563,11 +563,24 @@ over a 40-session batch — while only ~5 sessions in that batch have an
 `order_id` and are therefore flaggable at all. Whether any flag landed on a
 flaggable session was close to a coin toss, and one observed run produced
 **0 rows**, leaving `GET /flagged-orders` empty and contradicting the
-README. The 0.1 value is correct for the *synthetic* harness (10% bots by
-construction) but not for real batches, which are ~30% shared-device
-sessions (12 of 40 measured).
-**Fix:** raised the real-data path's default to `contamination=0.25`,
-leaving the synthetic harness at 0.1, with the reasoning in the docstring.
+README. The 0.1 value is correct for the *synthetic* harness, where the
+10% rate is known by construction, but it is not transferable to a real
+batch.
+**Fix:** the two values are now separate named constants —
+`SYNTHETIC_HARNESS_BOT_FRACTION = 0.1` (known by construction) and
+`ASSUMED_REAL_SCALPER_RATE = 0.25` (an asserted prior, **not** fitted or
+measured — the real path has no ground-truth labels, which is why it uses
+unsupervised detection at all). The scoring pass now prints the value it
+ran under, so a flag count cannot be quoted without its condition.
+
+A note on this report's own earlier wording: a previous revision justified
+0.25 by observing that a demo batch is "~30% shared-device sessions (12 of
+40 measured)". That justification has been withdrawn. Those sessions are
+identifiable as bot-cluster members only because `scripts/seed.py` created
+them — that is ground truth, and using it to choose the value would smuggle
+labels into the one path whose premise is that labels do not exist. The
+value is a disclosed assumption, and nothing more.
+
 Verified over 5 consecutive `demo_5` → `run_bot_scoring` cycles:
 
 ```

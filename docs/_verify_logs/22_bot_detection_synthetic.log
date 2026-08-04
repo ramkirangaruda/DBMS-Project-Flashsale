@@ -1,0 +1,21 @@
+Bot/Scalper Detection Model (Isolation Forest, unsupervised)
+============================================================
+Total sessions: 1000  (bots: 100, humans: 900)
+Flagged as anomalous: 100
+  True bots caught:   83 / 100  (recall = 83.0%)
+  False positives:    17  (precision = 83.0%)
+
+Sample flagged sessions:
+ checkout_latency_ms  session_duration_ms  accounts_per_device  requests_per_ip_per_min  is_actually_bot
+          194.985997           530.844130                   10                       33                1
+           61.959658           140.771243                   30                       35                1
+        13724.651118         64139.417416                    2                        3                0
+          500.000000          1237.186546                    2                        1                0
+          181.580464           181.731965                   20                       20                1
+         8609.415831         82115.665267                    2                        0                0
+
+Why unsupervised: real bot-purchase labels are scarce in practice,
+so Isolation Forest learns what 'normal' looks like and flags deviation,
+rather than requiring a labeled training set we don't actually have.
+The 'is_actually_bot' column above exists ONLY to evaluate this demo --
+it was never shown to the model during training.

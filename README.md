@@ -163,15 +163,47 @@ Feature importances:
   is_weekend                   0.016
 ```
 
-Be upfront about this in your report: R^2 = 0.082 is real -- next-day
-retail demand is genuinely noisy and this is a much harder problem than
-the synthetic version's clean generative model (which scores R^2 > 0.9
-because it *is* the ground truth function plus Gaussian noise, by
-construction). A low R^2 on real data next to a high one on synthetic
-data is itself a useful thing to discuss in Section 10.1: it's the
-difference between "the model recovered the formula we used to generate
-the labels" and "the model found real signal in a genuinely hard
-real-world series."
+Be upfront about this in your report: R^2 = 0.082 is real. But don't stop
+at "real data is noisy" -- the script measures *why*. Every run prints a
+sanity control that retrains the same model code on the synthetic
+generator, and `--framings` runs a full comparison:
+
+```bash
+python -m app.ml.demand_forecast --framings
+```
+
+```
+Framing                                  Kind                  R^2        MAE       rows
+----------------------------------------------------------------------------------------
+next-day units (SHIPPED framing)         forecast            0.082      21.84    165,770
+next-7-day total units                   forecast            0.270      94.32    160,281
+same-day units (NOWCAST, diagnostic)     not a forecast      0.319      17.23    166,269
+next-week units (weekly panel)           forecast            0.259      90.16     23,205
+same-week units (NOWCAST, diagnostic)    not a forecast      0.484      75.26     23,704
+SYNTHETIC generator (control)            control             0.941       4.06      2,000
+```
+
+The honest Section 10.1 story is a data-framing mismatch, not a modelling
+failure:
+
+- **The pipeline works.** Identical code scores 0.941 on synthetic data.
+- **But 0.941 is a ceiling by construction, not an achievement** -- those
+  labels *are* a known formula of those features plus Gaussian noise, so
+  recovering it only proves the training/eval path is sound. Use it as a
+  control; never quote it as this project's forecasting accuracy.
+- **UCI Online Retail has no flash-sale events at all.** It's a year of
+  ordinary invoice lines, so "units in the first 60 seconds" isn't
+  answerable from it -- next-day units is the nearest substitute, and that
+  substitution is what caps the score.
+- **~51% of SKU-days have zero sales**, so the daily target is a
+  spike-and-zero series dominated by arrival timing. Coarsening the
+  horizon roughly triples R^2 (0.270 for a 7-day total, 0.259 next-week).
+- **The nowcast rows aren't shippable models** (predicting today needs
+  today's sales) -- they're diagnostics showing the features do carry
+  signal. It's the step *forward in time* this dataset resists.
+
+R^2 isn't comparable across those rows (different variance denominators),
+so read it as which questions the data can answer, not a leaderboard.
 
 **Feature name mapping (real vs. synthetic) -- describe this honestly in
 your report, since the two datasets don't have identical columns:**
@@ -203,6 +235,19 @@ scoring → FlaggedOrder → `/flagged-orders`**.
    Forest, and for anything flagged writes a `FlaggedOrder` row
    (`review_status='pending'`) and flips that `Order.status` to
    `'flagged'` -- only for sessions tied to a real, successful order.
+
+   **Disclose the `contamination` value in your report.** The two code
+   paths use two constants that are different *kinds* of number:
+   `SYNTHETIC_HARNESS_BOT_FRACTION = 0.1` is known by construction (the
+   generator makes exactly 100 bots in 1000 sessions), while
+   `ASSUMED_REAL_SCALPER_RATE = 0.25` is an **assumed prior on scalper
+   prevalence -- not fitted to labels, because no ground-truth labels
+   exist for the real path.** That absence is the whole reason this is
+   unsupervised. It's a hyperparameter to disclose, not a result, and
+   every real-path flag count is conditional on it -- which is why the
+   scoring pass prints it. Don't justify it by counting the seeded
+   shared-fingerprint cluster: those are known bots only because
+   `seed.py` made them, and leaning on that would smuggle labels back in.
 3. `scripts/run_bot_scoring.py` runs that scoring pass as an explicit
    batch job. It's deliberately **not** inline in the checkout request:
    Isolation Forest needs a real batch of sessions to compare against

@@ -1,0 +1,72 @@
+Loading real data from c:\Users\ramki\flashsale-engine\data\online_retail.xlsx ...
+Demand Forecasting Model
+==================================================
+Data source: UCI Online Retail dataset (real data)
+Training rows: 132,616   Test rows: 33,154
+Mean Absolute Error: 21.84 units (next_day_qty)
+R^2 score: 0.082
+
+Feature importances:
+  pre_period_demand            0.428
+  day_of_week                  0.282
+  category_popularity          0.188
+  base_price                   0.043
+  discount_pct                 0.038
+  is_weekend                   0.021
+
+Example predictions vs actual (first 5 test rows):
+  predicted=67.1   actual=60.0
+  predicted=79.0   actual=0.0
+  predicted=1.5   actual=0.0
+  predicted=27.6   actual=10.0
+  predicted=18.1   actual=0.0
+
+Sanity control -- SAME model code, synthetic data:
+--------------------------------------------------------------
+  real (UCI, next_day_qty    )  R^2 = 0.082   MAE = 21.84
+  synthetic (orders_first_60s)  R^2 = 0.941   MAE = 4.06
+
+  The pipeline is not broken: identical code scores high when the target
+  is genuinely learnable from the features. But the synthetic score is a
+  ceiling BY CONSTRUCTION -- those labels are a known formula of those
+  features plus Gaussian noise, so recovering it proves only that the
+  training/evaluation path works. It is a control, not an achievement,
+  and must not be quoted as this project's forecasting accuracy.
+
+  The low real score is a data-framing mismatch: UCI Online Retail has no
+  flash-sale events, so 'first-60-second burst velocity' is not answerable
+  from it and next-day units is the nearest substitute. ~51% of SKU-days
+  have zero sales, so much of that target is arrival timing, not demand
+  level. Run with --framings to measure horizons that suit the data better
+  (next-7-day and next-week both roughly triple R^2).
+
+Use case: predicted next-period demand feeds the safety-stock buffer --
+a SKU predicted at high volume should get pessimistic locking
+(correctness under heavy contention); a SKU predicted at low volume
+can safely use OCC (lower overhead, low contention).
+
+Building the per-SKU daily panel (loads the xlsx once)...
+
+Framing comparison -- same model code, different questions
+========================================================================================
+~51% of SKU-days in the panel have ZERO sales, which is what makes
+the daily target so hard: much of its variance is arrival timing, not demand level.
+
+Framing                                  Kind                  R^2        MAE       rows
+----------------------------------------------------------------------------------------
+next-day units (SHIPPED framing)         forecast            0.082      21.84    165,770
+next-7-day total units                   forecast            0.270      94.32    160,281
+same-day units (NOWCAST, diagnostic)     not a forecast      0.319      17.23    166,269
+next-week units (weekly panel)           forecast            0.259      90.16     23,205
+same-week units (NOWCAST, diagnostic)    not a forecast      0.484      75.26     23,704
+SYNTHETIC generator (control)            control             0.941       4.06      2,000
+----------------------------------------------------------------------------------------
+R^2 is not comparable across rows (different variance denominators);
+this shows which questions the data can answer, not a leaderboard.
+
+Reading: the synthetic control scores high because its labels ARE a known
+formula of its features plus noise -- that is a ceiling by construction, not
+a result. Its only job here is to prove the training/eval code is sound, which
+isolates the low real-data score as a property of the data and the horizon.
+Coarsening the horizon roughly triples R^2; the nowcast rows show the features
+do carry signal, so it is the step forward in time this dataset resists.

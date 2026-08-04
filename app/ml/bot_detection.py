@@ -23,12 +23,58 @@ UserBehaviorLog rows (written by app/main.py's checkout endpoints) instead
 of this synthetic generator, and writes results back to FlaggedOrder /
 Order.status. Run it via scripts/run_bot_scoring.py, not inline in a
 checkout request -- see that script's docstring for why.
+
+The two paths use two different `contamination` values that are different
+KINDS of quantity, and the distinction matters for how each is reported:
+SYNTHETIC_HARNESS_BOT_FRACTION is known by construction (this file makes
+the bots), while ASSUMED_REAL_SCALPER_RATE is an asserted prior on real
+traffic that cannot be calibrated here because the real path has no labels.
+Only the first may be described as a measured rate. See both constants.
 """
 import numpy as np
 import pandas as pd
 from sqlalchemy import text
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
+
+# ---------------------------------------------------------------------------
+# Two DIFFERENT numbers that both happen to be IsolationForest's
+# `contamination` argument. They are not the same kind of quantity and must
+# not be reported as if they were.
+# ---------------------------------------------------------------------------
+
+# KNOWN BY CONSTRUCTION. generate_session_data() fabricates exactly 100 bots
+# out of 1000 sessions, so the true anomaly rate of that synthetic set is
+# 10% as a matter of arithmetic, not estimation. This value is only ever
+# legitimate for scoring generate_session_data(); it is a property of the
+# generator, not a finding about bot traffic.
+SYNTHETIC_HARNESS_BOT_FRACTION = 0.1
+
+# AN ASSUMPTION -- NOT A MEASUREMENT, NOT FITTED, NOT DERIVED FROM LABELS.
+#
+# This is a prior this project asserts about how much of a real flash-sale
+# checkout batch is scripted/scalper traffic. There are NO ground-truth bot
+# labels anywhere on the real-data path -- that absence is the entire reason
+# Section 10.2 uses unsupervised anomaly detection instead of a classifier --
+# so no honest procedure inside this codebase could calibrate this number.
+# It was chosen as a plausible order-of-magnitude prior for a contested
+# flash sale and nothing more.
+#
+# Treat it as a tunable hyperparameter to DISCLOSE, never as a result to
+# report. It is a hard cap on how many rows IsolationForest will label
+# anomalous (contamination sets the decision threshold on the score
+# distribution), so it directly determines how many FlaggedOrder rows a pass
+# writes. Raising it flags more sessions and catches more true scalpers at
+# the cost of more false positives; lowering it does the reverse. Any
+# writeup quoting flag counts from this path must state which value produced
+# them.
+#
+# Deliberately NOT justified by counting the seeded shared-fingerprint
+# cluster in a demo batch: those seeded "bots" are known only because
+# scripts/seed.py created them, which makes them ground truth. Using them to
+# pick this number would smuggle labels into the path whose whole premise is
+# that labels do not exist.
+ASSUMED_REAL_SCALPER_RATE = 0.25
 
 
 def generate_session_data(n_humans=900, n_bots=100, seed=7):
@@ -66,10 +112,13 @@ def train_and_evaluate():
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
 
-    # contamination = expected proportion of anomalies; here we know it's
-    # ~10% because we generated it, but in production this would be set from
-    # domain knowledge/historical takedown rates, not ground truth.
-    model = IsolationForest(n_estimators=200, contamination=0.1, random_state=42)
+    # Safe to use the exact anomaly rate here ONLY because this harness
+    # generated the data and therefore knows it (see the constant's comment).
+    # score_sessions() cannot do this and must not appear to -- it uses
+    # ASSUMED_REAL_SCALPER_RATE, an asserted prior, instead.
+    model = IsolationForest(
+        n_estimators=200, contamination=SYNTHETIC_HARNESS_BOT_FRACTION, random_state=42
+    )
     model.fit(X_scaled)
     # IsolationForest.predict returns 1 for inliers, -1 for outliers/anomalies.
     raw_pred = model.predict(X_scaled)
@@ -102,7 +151,7 @@ def train_and_evaluate():
     print("it was never shown to the model during training.")
 
 
-def score_sessions(db, contamination=0.25, min_sessions=20):
+def score_sessions(db, contamination=ASSUMED_REAL_SCALPER_RATE, min_sessions=20):
     """
     Batch-scores REAL UserBehaviorLog rows (as opposed to train_and_evaluate()'s
     synthetic demo data), and writes results back to FlaggedOrder / Order.status.
@@ -127,17 +176,21 @@ def score_sessions(db, contamination=0.25, min_sessions=20):
     the batch (their behavior contributes to what "normal" looks like) but
     can't themselves be flagged in FlaggedOrder.
 
-    `contamination` defaults higher here (0.25) than in train_and_evaluate()'s
-    synthetic harness (0.1), because it means different things in the two
-    places. The synthetic set is 10% bots BY CONSTRUCTION, so 0.1 is exactly
-    right there. Real scored batches are not: a demo_5_benchmark burst is ~30%
-    shared-device-cluster sessions (12 of 40), and contamination is a hard cap
-    on how many rows IsolationForest will label anomalous. Leaving it at 0.1
-    capped this path at 4 flags over a 40-session batch while only ~5 sessions
-    in that batch have an order_id at all, so whether any flag landed on a
-    flaggable session was close to a coin toss -- the pass would routinely
-    write zero FlaggedOrder rows and leave GET /flagged-orders empty. 0.25
-    sizes the cap to the traffic actually being scored.
+    `contamination` defaults to ASSUMED_REAL_SCALPER_RATE -- an ASSUMED PRIOR
+    on scalper prevalence, not a fitted or measured value. See that constant's
+    comment for why no honest calibration of it is possible here: this path
+    has no ground-truth bot labels at all, which is precisely why it uses
+    unsupervised anomaly detection. It is a disclosed hyperparameter, and any
+    flag count produced by this function is conditional on it. It is a
+    different KIND of number from train_and_evaluate()'s
+    SYNTHETIC_HARNESS_BOT_FRACTION, which is known by construction because
+    that harness fabricates its own bots.
+
+    Practical consequence worth knowing when reading a pass's output:
+    contamination is a hard cap on how many rows get labelled anomalous, and
+    only sessions with an order_id can become FlaggedOrder rows. If the cap is
+    set well below the share of the batch that is flaggable, a pass can flag
+    several sessions and still write zero FlaggedOrder rows.
     """
     query = """
         SELECT
@@ -198,6 +251,9 @@ def score_sessions(db, contamination=0.25, min_sessions=20):
 
     print("Bot/Scalper Detection -- real-data scoring pass")
     print("=" * 60)
+    print(f"contamination = {contamination} (ASSUMED scalper-rate prior, NOT fitted --")
+    print("  no ground-truth bot labels exist for this path; the counts below are")
+    print("  conditional on this assumption)")
     print(f"Sessions scored: {len(df)}")
     print(f"Flagged as anomalous: {int(df['flagged'].sum())}")
     print(f"  ...of which tied to a real (successful) order and written to FlaggedOrder: {len(flaggable)}")

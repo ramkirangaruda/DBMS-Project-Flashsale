@@ -450,6 +450,72 @@ wasn't actually observed.
 
 ## Section 10.1 -- Demand Forecasting (`app/ml/demand_forecast.py`)
 
+### Headline: what this dataset can and cannot answer
+
+The real-data model scores **R² = 0.082**. That number is real, and the
+investigation behind it matters more than the number itself, so it leads
+this section rather than trailing it as a caveat.
+
+The system's actual question is flash-sale burst velocity — *how many units
+move in the first 60 seconds of a scarce, time-boxed sale*. The UCI Online
+Retail dataset **contains no flash-sale events at all**: it is a year of
+ordinary invoice lines from a gift retailer, steady reordering aggregated
+to daily granularity at best. There is no event to be fast during. So the
+real-data path predicts the nearest answerable question — next-day units
+sold per SKU — and that substitution, not the model, is what caps the
+score.
+
+`compare_framings()` measures this instead of asserting it. Same model
+code, same features, only the question changes
+(`docs/_verify_logs/21_demand_forecast_framings.log`):
+
+```
+Framing comparison -- same model code, different questions
+========================================================================================
+~51% of SKU-days in the panel have ZERO sales, which is what makes
+the daily target so hard: much of its variance is arrival timing, not demand level.
+
+Framing                                  Kind                  R^2        MAE       rows
+----------------------------------------------------------------------------------------
+next-day units (SHIPPED framing)         forecast            0.082      21.84    165,770
+next-7-day total units                   forecast            0.270      94.32    160,281
+same-day units (NOWCAST, diagnostic)     not a forecast      0.319      17.23    166,269
+next-week units (weekly panel)           forecast            0.259      90.16     23,205
+same-week units (NOWCAST, diagnostic)    not a forecast      0.484      75.26     23,704
+SYNTHETIC generator (control)            control             0.941       4.06      2,000
+----------------------------------------------------------------------------------------
+```
+
+Three things follow, and they are the actual Section 10.1 finding:
+
+1. **The pipeline is correct.** Identical model code scores **0.941** on the
+   synthetic generator. A broken training/evaluation path could not do
+   that. This isolates the low real score as a property of the data, not a
+   bug.
+2. **The synthetic 0.941 is a ceiling by construction, not an achievement.**
+   That generator's labels *are* a known formula of its features plus
+   Gaussian noise, so a competent model is obliged to recover it. It is a
+   control. Quoting it as this project's forecasting accuracy would be
+   dishonest, and it is not quoted that way anywhere in this report.
+3. **Coarsening the horizon roughly triples R²** (0.082 → 0.270 for a
+   7-day total, 0.259 for next-week). Because ~51% of SKU-days have zero
+   sales, the daily target is a spike-and-zero series whose variance is
+   dominated by *arrival timing* rather than demand level; aggregation
+   averages that noise out. The two nowcast rows (0.319 / 0.484) predict
+   the current period rather than a future one — they are diagnostics, not
+   shippable models — and they show the features do carry genuine signal.
+   It is specifically the step forward in time that this dataset resists.
+
+R² is **not** comparable across those rows — each target has its own
+variance denominator — so the table shows which questions are answerable,
+not a ranking.
+
+The shipped default remains next-day units, so the reported MAE stays in
+directly interpretable units and the better-posed horizons are reported
+alongside rather than silently swapped in to flatter the headline number.
+
+### The shipped model, as run
+
 Trained on the real UCI "Online Retail" dataset (`data/online_retail.xlsx`,
 ~541k line items), after fixing the missing `openpyxl` dependency noted
 above:
@@ -478,6 +544,18 @@ Example predictions vs actual (first 5 test rows):
   predicted=27.6   actual=10.0
   predicted=18.1   actual=0.0
 
+Sanity control -- SAME model code, synthetic data:
+--------------------------------------------------------------
+  real (UCI, next_day_qty    )  R^2 = 0.082   MAE = 21.84
+  synthetic (orders_first_60s)  R^2 = 0.941   MAE = 4.06
+
+  The pipeline is not broken: identical code scores high when the target
+  is genuinely learnable from the features. But the synthetic score is a
+  ceiling BY CONSTRUCTION -- those labels are a known formula of those
+  features plus Gaussian noise, so recovering it proves only that the
+  training/evaluation path works. It is a control, not an achievement,
+  and must not be quoted as this project's forecasting accuracy.
+
 Use case: predicted next-period demand feeds the safety-stock buffer --
 a SKU predicted at high volume should get pessimistic locking
 (correctness under heavy contention); a SKU predicted at low volume
@@ -488,10 +566,38 @@ can safely use OCC (lower overhead, low contention).
 
 ## Section 10.2 -- Bot/Scalper Detection (`app/ml/bot_detection.py`)
 
+### The `contamination` parameter: two different kinds of number
+
+Both code paths pass a `contamination` value to Isolation Forest, but the
+two values are **not the same kind of quantity**, and the distinction
+governs how each may be reported. They are now two separately named
+constants in `app/ml/bot_detection.py` rather than one reused number:
+
+| Constant | Value | Status |
+|---|---|---|
+| `SYNTHETIC_HARNESS_BOT_FRACTION` | 0.1 | **Known by construction.** `generate_session_data()` fabricates exactly 100 bots in 1000 sessions, so the true rate is 10% by arithmetic. |
+| `ASSUMED_REAL_SCALPER_RATE` | 0.25 | **An assumed prior. Not fitted, not measured, not derived from labels.** |
+
+**The real-data contamination rate is an assumed prior on scalper
+prevalence, not fitted to labels — no ground-truth labels exist for the
+real path.** That absence is the entire reason Section 10.2 uses
+unsupervised anomaly detection rather than a classifier, so no honest
+procedure inside this codebase could calibrate the value. It is a
+hyperparameter to **disclose**, not a result to report, and every flag
+count from the real path is conditional on it.
+
+It is deliberately *not* justified by counting the seeded shared-fingerprint
+cluster in a demo batch. Those seeded "bots" are known only because
+`scripts/seed.py` created them — that is ground truth, and using it to pick
+the value would smuggle labels into the one path whose whole premise is
+that labels do not exist. The scoring pass now prints the value it used so
+no downstream reader can quote a count without its condition.
+
 ### Synthetic evaluation harness (`train_and_evaluate()`)
 
-Ground-truth labels exist only to score this synthetic demo -- never shown
-to the (unsupervised) Isolation Forest model itself:
+Uses `SYNTHETIC_HARNESS_BOT_FRACTION = 0.1`, which is legitimate here and
+only here. Ground-truth labels exist only to score this synthetic demo --
+never shown to the (unsupervised) Isolation Forest model itself:
 
 ```
 Bot/Scalper Detection Model (Isolation Forest, unsupervised)
@@ -519,37 +625,57 @@ rather than requiring a labeled training set we don't actually have.
 
 Run immediately after the `demo_5_benchmark.py` run captured in Section 8.2
 above, scoring the real `UserBehaviorLog` rows that run produced (40
-sessions, 6 from the shared-device-fingerprint bot cluster):
+sessions, 6 buyer identities drawn from the shared-device-fingerprint
+cluster). The pass prints the assumed prior it ran under, so the counts
+below are never quotable without it
+(`docs/_verify_logs/23_run_bot_scoring.log`):
 
 ```
 Bot/Scalper Detection -- real-data scoring pass
 ============================================================
+contamination = 0.25 (ASSUMED scalper-rate prior, NOT fitted --
+  no ground-truth bot labels exist for this path; the counts below are
+  conditional on this assumption)
 Sessions scored: 40
-Flagged as anomalous: 4
-  ...of which tied to a real (successful) order and written to FlaggedOrder: 1
+Flagged as anomalous: 10
+  ...of which tied to a real (successful) order and written to FlaggedOrder: 2
 
 Flagged sessions:
                             order_id  checkout_latency_ms  session_duration_ms  accounts_per_device  requests_per_ip_per_min  anomaly_score
-bb9853f5-1135-4b3f-ab12-18a9596ebd04                 93.0                   93                    6                       12       0.022157
+88e24e0f-c0c2-4ec0-960f-9bc06a0eb44c              12730.0                12730                    1                        2       0.072565
+b501a886-c22f-4168-935f-4dfcfaf19b03                289.0                  289                    6                       12       0.009310
 ```
 
-`accounts_per_device=6` and `requests_per_ip_per_min=12` is exactly the
-seeded bot-cluster signature (6 users sharing one `device_fingerprint`, all
-checking out from the shared bot IP within the same minute). That order's
-`status` flipped to `'flagged'` in the database.
+The second row carries `accounts_per_device=6` and
+`requests_per_ip_per_min=12` — the seeded bot-cluster signature (6 users
+sharing one `device_fingerprint`, all checking out from the shared bot IP
+within the same minute), with a 289ms session. The first row is a
+12.7-second session from a single-account device: a slow human, i.e. a
+false positive. Both orders' `status` flipped to `'flagged'` in the
+database.
 
-**Run-to-run variance, honestly reported:** across 6 back-to-back
-`demo_5_benchmark.py` + `run_bot_scoring.py` cycles run during this session,
-the number of anomalous sessions tied to a *successful* order varied --
-0 tied orders in 3 of the 6 runs, 1 in two runs, and 2 in one run (full logs:
-`docs/_raw_logs/11` through `docs/_raw_logs/19`). This is expected, not a
-bug: Isolation Forest flags the 4 most statistically unusual sessions out of
-40 each time, and which of the 6 bot-cluster buyers actually won one of the
-5 available units (out of 40 competing) is itself random per run. The result
-captured above is from the run whose output is authoritative for this report
-(`docs/_raw_logs/18_demo5_final_for_report.log` and
-`docs/_raw_logs/19_run_bot_scoring_final.log`), and matches what the live API
-returned (next section) since it's the run left in the database afterward.
+**Do not quote a precision or recall figure for this path.** There are no
+ground-truth labels for it, so neither is computable. The 83% recall
+reported above belongs solely to the synthetic harness, which has labels by
+construction. Reporting it as the system's bot-detection accuracy would
+carry a synthetic-data number into a real-data claim.
+
+**Run-to-run variance, honestly reported:** which specific sessions get
+flagged varies per run, because Isolation Forest ranks sessions *relative
+to the rest of the batch*, and which buyers win the 5 available units among
+40 competitors is itself random. What is stable is that the pass writes
+real `FlaggedOrder` rows tied to real `Order` ids — verified across 5
+consecutive `demo_5_benchmark.py` → `run_bot_scoring.py` cycles, which
+wrote 1, 2, 2, 1, 1 rows respectively (never zero).
+
+An earlier revision of this file reported 0 tied orders in 3 of 6 cycles.
+That was accurate for the code as it then stood: `contamination` was 0.1 on
+this path, capping it at 4 flags over a 40-session batch while only ~5
+sessions in that batch have an `order_id` and are therefore flaggable at
+all, so whether any flag landed on a flaggable session was close to a coin
+toss. Raising the prior to `ASSUMED_REAL_SCALPER_RATE = 0.25` sizes the cap
+to the batch actually being scored. It is still an assumption, not a
+calibration.
 
 ### Live `GET /flagged-orders` response
 
@@ -560,46 +686,35 @@ after the run above, queried with `curl`:
 $ curl -s http://127.0.0.1:8010/flagged-orders
 ```
 
-First 5 of 50 rows returned (full raw response in
-`docs/_raw_logs/21_flagged_orders_response.json`):
+Full response (also saved to
+`docs/_verify_logs/24_flagged_orders_response.json`):
 
 ```json
 [
-  {
-    "order_id": "bb9853f5-1135-4b3f-ab12-18a9596ebd04",
-    "anomaly_score": 0.0222,
-    "review_status": "pending"
-  },
-  {
-    "order_id": "bdedd844-e41a-4708-ab56-06165d37fff9",
-    "anomaly_score": 0.8806,
-    "review_status": "pending"
-  },
-  {
-    "order_id": "e54b4e5d-8fa7-4e61-a3bb-45725eb4d308",
-    "anomaly_score": 0.5524,
-    "review_status": "pending"
-  },
-  {
-    "order_id": "b738f053-c3c7-457a-8f5e-463052324e9e",
-    "anomaly_score": 0.892,
-    "review_status": "pending"
-  },
-  {
-    "order_id": "a6dd2cb1-534b-486c-b656-0eeb679d0aad",
-    "anomaly_score": 0.8094,
-    "review_status": "pending"
-  }
+    {
+        "order_id": "88e24e0f-c0c2-4ec0-960f-9bc06a0eb44c",
+        "anomaly_score": 0.0726,
+        "review_status": "pending"
+    },
+    {
+        "order_id": "b501a886-c22f-4168-935f-4dfcfaf19b03",
+        "anomaly_score": 0.0093,
+        "review_status": "pending"
+    }
 ]
 ```
 
-The top row (`order_id bb9853f5-...`) is exactly the order the scoring pass
-above just flagged, confirming the full path is wired end to end: checkout
--> `UserBehaviorLog` -> `score_sessions()` -> `FlaggedOrder` ->
-`GET /flagged-orders`. (The remaining rows are older `flagged_orders`
-entries from `scripts/seed_large.py`'s synthetic tagged data, which the
-endpoint's `ORDER BY flagged_at DESC LIMIT 50` sorts after anything freshly
-flagged.)
+Both rows are exactly the two orders the scoring pass above flagged,
+confirming the full path is wired end to end: checkout →
+`UserBehaviorLog` → `score_sessions()` → `FlaggedOrder` →
+`GET /flagged-orders`. `SELECT count(*) FROM flagged_orders` returns 2,
+matching the response exactly.
+
+(In an earlier revision this response had 50 rows, because
+`scripts/seed_large.py`'s 8,000 synthetic tagged `flagged_orders` were
+still resident and the endpoint's `ORDER BY flagged_at DESC LIMIT 50`
+returned them behind the freshly flagged one. Re-seeding clears those, so
+only genuinely scored orders remain here.)
 
 ---
 

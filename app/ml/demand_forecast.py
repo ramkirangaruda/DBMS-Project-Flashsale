@@ -20,7 +20,62 @@ that mimics realistic flash-sale demand patterns, NOT real data. If
 data/online_retail.xlsx is missing, train_and_evaluate() falls back to it
 automatically and prints a warning; it is not the default path.
 
+WHY THE REAL-DATA R^2 IS LOW (~0.08), AND WHY THAT IS NOT A BUG
+---------------------------------------------------------------
+There is a structural mismatch between what this project wants to predict
+and what the UCI dataset can answer.
+
+The system's actual question is flash-sale burst velocity: "how many units
+will move in the first 60 seconds of a scarce, time-boxed sale event?" The
+UCI Online Retail dataset contains no flash-sale events at all. It is a
+year of ordinary invoice lines from a gift retailer -- steady wholesale and
+retail reordering, aggregated to daily granularity at best. There is no
+event to be fast during. So the real-data path predicts the nearest
+answerable question instead (next-day units sold per SKU), and that
+substitution, not the model, is what caps the score.
+
+Two properties of the data make daily prediction especially hard:
+  - ~51% of SKU-days in the panel have ZERO sales. The target is a
+    spike-and-zero series, so a large share of the variance is arrival
+    timing rather than demand level.
+  - Per-SKU daily counts at this granularity are dominated by lumpy
+    wholesale reorders, which are close to unpredictable from price and
+    calendar features alone.
+
+compare_framings() below quantifies this rather than asserting it. Measured
+on this dataset (see docs/results.md for the captured run):
+  - next-day units (the shipped framing):          R^2 = 0.082
+  - next-7-day total units:                        R^2 = 0.270
+  - next-week units (weekly panel):                R^2 = 0.259
+  - same-day units (nowcast, not a forecast):      R^2 = 0.319
+  - same-week units (nowcast, weekly):             R^2 = 0.484
+  - the SAME model code on synthetic data:         R^2 = 0.941
+
+Read those together and the diagnosis is unambiguous. The pipeline is
+correct -- identical model code scores 0.941 when the target is actually
+learnable from the features. Coarsening the horizon roughly triples R^2
+(0.082 -> ~0.27), because aggregation averages out the day-to-day arrival
+noise that dominates the daily target. And the nowcast rows show the
+features do carry genuine signal (0.319 / 0.484); it is specifically the
+step forward in time that this dataset does not support well.
+
+Note that R^2 is NOT directly comparable across these rows -- each target
+has its own variance denominator -- so the numbers indicate which questions
+are answerable, not a leaderboard. The synthetic 0.941 in particular is a
+ceiling produced by construction, not an achievement: that generator's
+labels ARE a known formula of its features plus Gaussian noise, so a good
+model must recover it. Quoting it as evidence of model quality would be
+dishonest; its only legitimate use is the one made here -- as a control
+proving the training/evaluation code works, isolating the low real-data
+score as a data-framing limit.
+
+The shipped default remains next-day units so the reported MAE stays in
+directly interpretable units, with the better-posed horizons reported
+alongside rather than silently swapped in.
+
 Run with: venv/bin/python -m app.ml.demand_forecast
+             (add --framings to also run the framing comparison above;
+              it retrains several models and takes a few extra minutes)
 """
 import os
 import threading
@@ -80,12 +135,17 @@ def generate_synthetic_fallback_data(n=2000, seed=42):
     })
 
 
-def load_real_data(path=DATA_PATH, top_n_skus=500, pre_period_days=7):
+def _build_daily_panel(path=DATA_PATH, top_n_skus=500, pre_period_days=7):
     """
     Loads the UCI "Online Retail" dataset and reframes it into the same
     purchase-velocity-style supervised learning problem the synthetic
-    generator demonstrates: predict next-day purchase volume per SKU from
-    price, discounting, item popularity, and calendar effects.
+    generator demonstrates: a per-SKU daily panel carrying price,
+    discounting, item popularity, and calendar effects.
+
+    Returns the panel WITHOUT a target column attached, so callers can hang
+    different targets off the same features -- load_real_data() uses
+    next-day units, compare_framings() also derives 7-day and weekly
+    horizons from this same panel.
 
     Cleaning:
       - drop cancelled orders (InvoiceNo starting with 'C')
@@ -110,13 +170,15 @@ def load_real_data(path=DATA_PATH, top_n_skus=500, pre_period_days=7):
                                next, just measured in actual past sales
                                instead of wishlist adds)
 
-    Target: next_day_qty, this SKU's total units sold on the following
-    calendar day.
-
     Restricted to the `top_n_skus` best-selling SKUs so each item has
     enough trading history for a stable rolling pre-period feature and a
     well-defined "next day" -- a normal curation step for a per-SKU time
     series model, not a synthetic shortcut.
+
+    Missing days are reindexed in with qty=0 rather than dropped, so "next
+    day" and "trailing N days" mean actual calendar time. That is the honest
+    construction, and it is also why ~51% of panel rows have a zero target:
+    these SKUs genuinely do not sell every day. See the module docstring.
     """
     df = pd.read_excel(path)
 
@@ -164,11 +226,19 @@ def load_real_data(path=DATA_PATH, top_n_skus=500, pre_period_days=7):
         panel.groupby("StockCode")["qty"]
         .transform(lambda s: s.shift(1).rolling(pre_period_days, min_periods=1).sum())
     )
-    panel["next_day_qty"] = panel.groupby("StockCode")["qty"].shift(-1)
-
-    panel = panel.dropna(subset=["pre_period_demand", "next_day_qty"])
     panel = panel.rename(columns={"price": "base_price"})
 
+    return panel
+
+
+def load_real_data(path=DATA_PATH, top_n_skus=500, pre_period_days=7):
+    """Shipped real-data framing: predict each SKU's units sold on the NEXT
+    calendar day. See the module docstring for why this target scores low and
+    which alternative horizons score better -- compare_framings() measures
+    them."""
+    panel = _build_daily_panel(path, top_n_skus, pre_period_days)
+    panel["next_day_qty"] = panel.groupby("StockCode")["qty"].shift(-1)
+    panel = panel.dropna(subset=["pre_period_demand", "next_day_qty"])
     return panel[REAL_FEATURE_COLS + [REAL_TARGET_COL]].reset_index(drop=True)
 
 
@@ -203,6 +273,114 @@ def _fit(force_synthetic=False):
     }
 
 
+def _eval_framing(df, feature_cols, target_col):
+    """Fit the SAME model config used everywhere else on an arbitrary
+    feature/target pair. Used by compare_framings() so every row of that
+    table differs only in what is being predicted, never in how."""
+    d = df.dropna(subset=list(feature_cols) + [target_col])
+    if len(d) < 100:
+        return None
+    X_train, X_test, y_train, y_test = train_test_split(
+        d[feature_cols], d[target_col], test_size=0.2, random_state=42
+    )
+    model = GradientBoostingRegressor(n_estimators=200, max_depth=3, learning_rate=0.05, random_state=42)
+    model.fit(X_train, y_train)
+    preds = model.predict(X_test)
+    return {
+        "r2": r2_score(y_test, preds),
+        "mae": mean_absolute_error(y_test, preds),
+        "n": len(d),
+    }
+
+
+def compare_framings(path=DATA_PATH):
+    """
+    Measures how much of the low real-data R^2 is the TARGET's fault rather
+    than the model's, by re-asking the question at several horizons and
+    granularities with identical model code.
+
+    Included deliberately: two "nowcast" rows that predict the CURRENT
+    period instead of a future one. Those are not forecasts and could never
+    ship -- a nowcast needs today's sales to predict today's sales. They are
+    diagnostics: if the features explain the present far better than the
+    future, the gap is forecasting difficulty in the data, not weak features
+    or a broken pipeline.
+
+    R^2 is NOT comparable across rows -- each target has its own variance --
+    so read this as which questions this dataset can answer, not a ranking.
+    """
+    if not os.path.exists(path):
+        print(f"WARNING: {path} not found -- compare_framings() needs the real dataset.")
+        return []
+
+    print("Building the per-SKU daily panel (loads the xlsx once)...")
+    panel = _build_daily_panel(path)
+    zero_share = (panel["qty"] == 0).mean()
+
+    rows = []
+
+    panel["next_day_qty"] = panel.groupby("StockCode")["qty"].shift(-1)
+    rows.append(("next-day units (SHIPPED framing)", "forecast",
+                 _eval_framing(panel, REAL_FEATURE_COLS, "next_day_qty")))
+
+    panel["next_7d_qty"] = panel.groupby("StockCode")["qty"].transform(
+        lambda s: s.shift(-7).rolling(7, min_periods=7).sum())
+    rows.append(("next-7-day total units", "forecast",
+                 _eval_framing(panel, REAL_FEATURE_COLS, "next_7d_qty")))
+
+    rows.append(("same-day units (NOWCAST, diagnostic)", "not a forecast",
+                 _eval_framing(panel, REAL_FEATURE_COLS, "qty")))
+
+    # Weekly panel -- coarser grain, rebuilt from the same daily rows.
+    wk = panel.reset_index().rename(columns={"index": "day"})
+    wk["week"] = wk["day"].dt.to_period("W").dt.start_time
+    weekly = wk.groupby(["StockCode", "week"]).agg(
+        qty=("qty", "sum"),
+        base_price=("base_price", "mean"),
+        discount_pct=("discount_pct", "mean"),
+        category_popularity=("category_popularity", "first"),
+    ).reset_index()
+    weekly["pre_period_demand"] = weekly.groupby("StockCode")["qty"].transform(
+        lambda s: s.shift(1).rolling(4, min_periods=1).sum())
+    weekly["week_of_year"] = weekly["week"].dt.isocalendar().week.astype(int)
+    weekly["next_week_qty"] = weekly.groupby("StockCode")["qty"].shift(-1)
+    wfeat = ["base_price", "discount_pct", "category_popularity", "pre_period_demand", "week_of_year"]
+
+    rows.append(("next-week units (weekly panel)", "forecast",
+                 _eval_framing(weekly, wfeat, "next_week_qty")))
+    rows.append(("same-week units (NOWCAST, diagnostic)", "not a forecast",
+                 _eval_framing(weekly, wfeat, "qty")))
+
+    syn = _fit(force_synthetic=True)
+    rows.append(("SYNTHETIC generator (control)", "control",
+                 {"r2": syn["r2"], "mae": syn["mae"], "n": len(syn["X_train"]) + len(syn["X_test"])}))
+
+    print()
+    print("Framing comparison -- same model code, different questions")
+    print("=" * 88)
+    print(f"~{zero_share:.0%} of SKU-days in the panel have ZERO sales, which is what makes")
+    print("the daily target so hard: much of its variance is arrival timing, not demand level.")
+    print()
+    print(f"{'Framing':<40} {'Kind':<16} {'R^2':>8} {'MAE':>10} {'rows':>10}")
+    print("-" * 88)
+    for label, kind, res in rows:
+        if res is None:
+            print(f"{label:<40} {kind:<16} {'--':>8} {'--':>10} {'too few':>10}")
+            continue
+        print(f"{label:<40} {kind:<16} {res['r2']:>8.3f} {res['mae']:>10.2f} {res['n']:>10,}")
+    print("-" * 88)
+    print("R^2 is not comparable across rows (different variance denominators);")
+    print("this shows which questions the data can answer, not a leaderboard.")
+    print()
+    print("Reading: the synthetic control scores high because its labels ARE a known")
+    print("formula of its features plus noise -- that is a ceiling by construction, not")
+    print("a result. Its only job here is to prove the training/eval code is sound, which")
+    print("isolates the low real-data score as a property of the data and the horizon.")
+    print("Coarsening the horizon roughly triples R^2; the nowcast rows show the features")
+    print("do carry signal, so it is the step forward in time this dataset resists.")
+    return rows
+
+
 def train_and_evaluate(force_synthetic=False):
     if (not force_synthetic) and os.path.exists(DATA_PATH):
         print(f"Loading real data from {DATA_PATH} ...")
@@ -232,6 +410,32 @@ def train_and_evaluate(force_synthetic=False):
     print("Example predictions vs actual (first 5 test rows):")
     for i in range(5):
         print(f"  predicted={preds[i]:.1f}   actual={y_test.values[i]:.1f}")
+
+    # Same-run control: retrain the SAME model code on the synthetic
+    # generator and print both R^2 values together. This is the cheapest
+    # honest way to separate "the implementation is broken" from "this
+    # dataset cannot answer this question", and it costs ~1s.
+    if r["source_label"].startswith("UCI"):
+        syn = _fit(force_synthetic=True)
+        print()
+        print("Sanity control -- SAME model code, synthetic data:")
+        print("-" * 62)
+        print(f"  real (UCI, {REAL_TARGET_COL:<16})  R^2 = {r['r2']:.3f}   MAE = {r['mae']:.2f}")
+        print(f"  synthetic ({SYNTHETIC_TARGET_COL:<16})  R^2 = {syn['r2']:.3f}   MAE = {syn['mae']:.2f}")
+        print()
+        print("  The pipeline is not broken: identical code scores high when the target")
+        print("  is genuinely learnable from the features. But the synthetic score is a")
+        print("  ceiling BY CONSTRUCTION -- those labels are a known formula of those")
+        print("  features plus Gaussian noise, so recovering it proves only that the")
+        print("  training/evaluation path works. It is a control, not an achievement,")
+        print("  and must not be quoted as this project's forecasting accuracy.")
+        print()
+        print("  The low real score is a data-framing mismatch: UCI Online Retail has no")
+        print("  flash-sale events, so 'first-60-second burst velocity' is not answerable")
+        print("  from it and next-day units is the nearest substitute. ~51% of SKU-days")
+        print("  have zero sales, so much of that target is arrival timing, not demand")
+        print("  level. Run with --framings to measure horizons that suit the data better")
+        print("  (next-7-day and next-week both roughly triple R^2).")
 
     print()
     print("Use case: predicted next-period demand feeds the safety-stock buffer --")
@@ -275,4 +479,9 @@ def get_forecast_sample(n=10):
 
 
 if __name__ == "__main__":
+    import sys
+
     train_and_evaluate()
+    if "--framings" in sys.argv:
+        print()
+        compare_framings()

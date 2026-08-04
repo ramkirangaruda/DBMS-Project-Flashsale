@@ -491,17 +491,62 @@ def build():
         col_widths=[2.5, 2.5],
     )
     doc.add_paragraph(
-        "R² = 0.082 is a low score reported honestly rather than substituted for a more "
-        "flattering synthetic-data number: next-day retail demand is genuinely noisy, and this "
-        "is a materially harder problem than a synthetic generative model would present (a "
-        "synthetic fallback in this same codebase scores R² > 0.9 because it is the ground-"
-        "truth generating function plus Gaussian noise, by construction). The gap between the "
-        "two is itself informative: it is the difference between a model recovering the "
-        "formula used to generate labels, and a model finding real signal in a genuinely hard "
-        "real-world series. This predicted next-period demand is what feeds the safety-stock "
-        "decision described in Section 3: a SKU predicted at high volume should default to "
-        "pessimistic locking for guaranteed correctness under heavy contention, while a SKU "
-        "predicted at low volume can use the cheaper optimistic path."
+        "R² = 0.082 is low, and the investigation behind that number is the actual finding of "
+        "this subsection. The system's real question is flash-sale burst velocity — how many "
+        "units move in the first 60 seconds of a scarce, time-boxed sale. The UCI Online Retail "
+        "dataset contains no flash-sale events at all: it is a year of ordinary invoice lines "
+        "from a gift retailer, steady reordering aggregated to daily granularity at best. There "
+        "is no event to be fast during. The real-data path therefore predicts the nearest "
+        "answerable question — next-day units sold per SKU — and that substitution, not the "
+        "model, is what caps the score."
+    )
+    doc.add_paragraph(
+        "Rather than assert that, compare_framings() measures it: the same model code and the "
+        "same features, with only the question changed."
+    )
+    add_table(
+        doc,
+        ["Framing", "Kind", "R²", "MAE"],
+        [
+            ["next-day units (shipped framing)", "forecast", "0.082", "21.84"],
+            ["next-7-day total units", "forecast", "0.270", "94.32"],
+            ["same-day units (nowcast)", "not a forecast", "0.319", "17.23"],
+            ["next-week units (weekly panel)", "forecast", "0.259", "90.16"],
+            ["same-week units (nowcast)", "not a forecast", "0.484", "75.26"],
+            ["synthetic generator (control)", "control", "0.941", "4.06"],
+        ],
+        col_widths=[2.4, 1.5, 0.8, 0.9],
+    )
+    doc.add_paragraph(
+        "Three conclusions follow. First, the pipeline is correct: identical model code scores "
+        "R² = 0.941 on the synthetic generator, which a broken training or evaluation path could "
+        "not do. That isolates the low real-data score as a property of the data rather than a "
+        "defect in the implementation. Second, that synthetic 0.941 is a ceiling by construction "
+        "and not an achievement — the generator's labels are a known formula of its own features "
+        "plus Gaussian noise, so a competent model is obliged to recover it. It is used here "
+        "strictly as a control, and it is not quoted anywhere in this report as the project's "
+        "forecasting accuracy. Third, coarsening the prediction horizon roughly triples R² "
+        "(0.082 to 0.270 for a seven-day total, 0.259 for next-week), because roughly 51% of "
+        "SKU-days in the panel have zero sales; the daily target is a spike-and-zero series "
+        "whose variance is dominated by arrival timing rather than demand level, and aggregation "
+        "averages that noise out."
+    )
+    doc.add_paragraph(
+        "The two nowcast rows predict the current period instead of a future one. They are "
+        "diagnostics rather than shippable models — a nowcast needs today's sales to predict "
+        "today's sales — but they establish that the features carry genuine signal (R² = 0.319 "
+        "and 0.484). It is specifically the step forward in time that this dataset resists. Note "
+        "that R² is not comparable across these rows, since each target has its own variance "
+        "denominator; the table shows which questions the data can answer, not a ranking. The "
+        "shipped default remains next-day units so the reported MAE stays in directly "
+        "interpretable units, with the better-posed horizons reported alongside rather than "
+        "silently swapped in to flatter the headline figure."
+    )
+    doc.add_paragraph(
+        "This predicted next-period demand is what feeds the safety-stock decision described in "
+        "Section 3: a SKU predicted at high volume should default to pessimistic locking for "
+        "guaranteed correctness under heavy contention, while a SKU predicted at low volume can "
+        "use the cheaper optimistic path."
     )
 
     doc.add_heading("10.2 Bot / Scalper Detection", level=2)
@@ -511,54 +556,90 @@ def build():
         "synthetic evaluation harness (1,000 sessions, 100 of them synthetic bots, labels used "
         "only to score the demo and never shown to the model), the model flagged 100 sessions "
         "as anomalous, catching 83 of the 100 real bots (83.0% recall) with 17 false positives "
-        "(83.0% precision)."
+        "(83.0% precision). Those two percentages describe the synthetic harness only, and are "
+        "computable only because that harness fabricates its own labels."
+    )
+    doc.add_paragraph(
+        "Both code paths pass a contamination value to Isolation Forest, but the two values are "
+        "different kinds of quantity and are now two separately named constants rather than one "
+        "reused number. SYNTHETIC_HARNESS_BOT_FRACTION = 0.1 is known by construction: the "
+        "generator fabricates exactly 100 bots in 1,000 sessions, so the true anomaly rate of "
+        "that set is 10% as a matter of arithmetic. ASSUMED_REAL_SCALPER_RATE = 0.25 is not "
+        "that kind of number at all."
+    )
+    doc.add_paragraph(
+        "The real-data contamination rate is an assumed prior on scalper prevalence, not fitted "
+        "to labels — no ground-truth labels exist for the real path. That absence is precisely "
+        "why this section uses unsupervised anomaly detection instead of a classifier, so no "
+        "honest procedure within this system could calibrate the value. It is a hyperparameter "
+        "to disclose rather than a result to report, and every flag count produced by the "
+        "real-data path is conditional on it; the scoring pass prints the value it ran under so "
+        "that a count cannot be quoted without its condition. It is deliberately not justified "
+        "by counting the seeded shared-fingerprint cluster in a demo batch — those seeded bots "
+        "are known only because the seed script created them, which is ground truth, and using "
+        "it to choose the value would smuggle labels into the one path whose premise is that "
+        "labels do not exist."
     )
     doc.add_paragraph(
         "The real-data path is wired end to end: checkout API → UserBehaviorLog → "
         "score_sessions() → FlaggedOrder → GET /flagged-orders. Run against 40 real "
         "checkout sessions produced by demo_5_benchmark.py's own 40-buyer benchmark (6 of "
-        "which reuse scripts/seed.py's shared-device-fingerprint bot cluster), the batch "
-        "scoring job flagged 4 sessions as anomalous, 1 of which tied to a real successful "
-        "order:"
+        "which reuse scripts/seed.py's shared-device-fingerprint bot cluster), and running under "
+        "the assumed prior described above, the batch scoring job flagged 10 sessions as "
+        "anomalous, 2 of which tied to a real successful order:"
     )
     add_code_block(
         doc,
-        "order_id: bb9853f5-1135-4b3f-ab12-18a9596ebd04\n"
-        "checkout_latency_ms=93.0  session_duration_ms=93  "
-        "accounts_per_device=6  requests_per_ip_per_min=12  anomaly_score=0.022157",
+        "contamination = 0.25 (ASSUMED scalper-rate prior, NOT fitted)\n"
+        "\n"
+        "order_id: 88e24e0f-c0c2-4ec0-960f-9bc06a0eb44c\n"
+        "checkout_latency_ms=12730.0  session_duration_ms=12730  "
+        "accounts_per_device=1  requests_per_ip_per_min=2  anomaly_score=0.072565\n"
+        "\n"
+        "order_id: b501a886-c22f-4168-935f-4dfcfaf19b03\n"
+        "checkout_latency_ms=289.0  session_duration_ms=289  "
+        "accounts_per_device=6  requests_per_ip_per_min=12  anomaly_score=0.009310",
     )
     doc.add_paragraph(
-        "accounts_per_device=6 and requests_per_ip_per_min=12 are exactly the seeded "
-        "bot-cluster signature (6 accounts sharing one device_fingerprint, all checking out "
-        "from the shared bot IP within the same minute). That order's status flipped to "
-        "'flagged' in the database. Reported honestly: across 6 back-to-back runs of this same "
-        "demo-then-score cycle performed during this session, the count of anomalous sessions "
-        "tied to a successful order varied between runs (0, 0, 1, 2, 1, 0, then 1 on the "
-        "authoritative final run below) -- expected variance, since which of the 6 bot-cluster "
-        "buyers happens to win one of the 5 available units among 40 competitors is itself "
-        "random per run, not a bug in the detector."
+        "The second row carries accounts_per_device=6 and requests_per_ip_per_min=12 — exactly "
+        "the seeded bot-cluster signature (6 accounts sharing one device_fingerprint, all "
+        "checking out from the shared bot IP within the same minute), with a 289ms session. The "
+        "first row is a 12.7-second session from a single-account device: a slow human, and "
+        "therefore a false positive. Both orders' status flipped to 'flagged' in the database."
+    )
+    doc.add_paragraph(
+        "No precision or recall figure is quoted for this real-data path, because none is "
+        "computable: there are no ground-truth labels for it. The 83% recall reported earlier "
+        "belongs solely to the synthetic harness. Reporting it as the system's bot-detection "
+        "accuracy would carry a synthetic-data number into a real-data claim."
+    )
+    doc.add_paragraph(
+        "Reported honestly: which specific sessions get flagged varies from run to run, because "
+        "Isolation Forest ranks each session relative to the rest of its batch, and which buyers "
+        "win the 5 available units among 40 competitors is itself random. What is stable is that "
+        "the pass writes real FlaggedOrder rows tied to real Order ids — verified across five "
+        "consecutive benchmark-then-score cycles, which wrote 1, 2, 2, 1 and 1 rows respectively, "
+        "never zero."
     )
     doc.add_paragraph(
         "The live GET /flagged-orders response, captured by starting uvicorn against this "
         "exact database state and curling the endpoint directly, confirms the path end to end "
-        "-- the freshly flagged order is the top row (the endpoint orders by flagged_at "
-        "DESC):"
+        "-- both freshly flagged orders are returned, and SELECT count(*) FROM flagged_orders "
+        "returns 2, matching the response exactly:"
     )
     add_code_block(
         doc,
         '[\n'
-        '  {\n'
-        '    "order_id": "bb9853f5-1135-4b3f-ab12-18a9596ebd04",\n'
-        '    "anomaly_score": 0.0222,\n'
-        '    "review_status": "pending"\n'
-        '  },\n'
-        '  {\n'
-        '    "order_id": "bdedd844-e41a-4708-ab56-06165d37fff9",\n'
-        '    "anomaly_score": 0.8806,\n'
-        '    "review_status": "pending"\n'
-        '  },\n'
-        '  ... 48 more rows (older scripts/seed_large.py synthetic-tagged\n'
-        '      flagged_orders, sorted after by flagged_at DESC)\n'
+        '    {\n'
+        '        "order_id": "88e24e0f-c0c2-4ec0-960f-9bc06a0eb44c",\n'
+        '        "anomaly_score": 0.0726,\n'
+        '        "review_status": "pending"\n'
+        '    },\n'
+        '    {\n'
+        '        "order_id": "b501a886-c22f-4168-935f-4dfcfaf19b03",\n'
+        '        "anomaly_score": 0.0093,\n'
+        '        "review_status": "pending"\n'
+        '    }\n'
         ']',
     )
 

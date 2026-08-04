@@ -1,0 +1,12 @@
+[
+    {
+        "order_id": "88e24e0f-c0c2-4ec0-960f-9bc06a0eb44c",
+        "anomaly_score": 0.0726,
+        "review_status": "pending"
+    },
+    {
+        "order_id": "b501a886-c22f-4168-935f-4dfcfaf19b03",
+        "anomaly_score": 0.0093,
+        "review_status": "pending"
+    }
+]
