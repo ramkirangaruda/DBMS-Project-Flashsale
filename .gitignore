@@ -6,8 +6,9 @@ venv/
 __pycache__/
 *.pyc
 
-# Generated at seed time -- not source
-scripts/seed_ids.py
+# Generated at seed time -- not source. (The canonical demo ids are NOT here:
+# they're fixed constants in scripts/seed.py. Only seed_large.py's randomised
+# fingerprint/row-count values get written out.)
 scripts/seed_ids_large.py
 
 # Real datasets -- multi-MB, not committed; see README for download instructions

@@ -13,7 +13,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from sqlalchemy import text
 from app.database import SessionLocal
-from scripts.seed_ids import SALE_ID, USER_IDS
+from scripts.seed import DEMO_SALE_ID, DEMO_USER_IDS
+
+# Fixed canonical ids from scripts/seed.py -- stable across reseeds.
+SALE_ID = str(DEMO_SALE_ID)
+USER_IDS = [str(u) for u in DEMO_USER_IDS]
 
 
 def pessimistic_checkout(user_id: str, results: list, index: int):

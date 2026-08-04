@@ -22,7 +22,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 import redis
 from sqlalchemy import text
 from app.database import SessionLocal
-from scripts.seed_ids import SALE_ID, USER_IDS
+from scripts.seed import DEMO_SALE_ID, DEMO_USER_IDS
+
+# Fixed canonical ids from scripts/seed.py -- stable across reseeds.
+SALE_ID = str(DEMO_SALE_ID)
+USER_IDS = [str(u) for u in DEMO_USER_IDS]
 
 r = redis.Redis(
     host=os.getenv("REDIS_HOST", "localhost"),
@@ -68,7 +72,21 @@ def redis_checkout(user_id: str, results: list, index: int):
 def run():
     r.set(STOCK_KEY, 1)  # 1 unit available, mirrors the other demos
     reset_db = SessionLocal()
-    reset_db.execute(text("DELETE FROM orders WHERE sale_id = :sid"), {"sid": SALE_ID})
+    # Scoped by USER, not by sale -- scripts/seed_large.py's bulk orders live
+    # on this same SALE_ID and must survive a demo reset. Children first so
+    # no foreign key is violated.
+    reset_db.execute(text("""
+        DELETE FROM flagged_orders WHERE order_id IN (
+            SELECT id FROM orders WHERE user_id = ANY(CAST(:uids AS uuid[]))
+        )
+    """), {"uids": USER_IDS})
+    reset_db.execute(text("""
+        DELETE FROM order_items WHERE order_id IN (
+            SELECT id FROM orders WHERE user_id = ANY(CAST(:uids AS uuid[]))
+        )
+    """), {"uids": USER_IDS})
+    reset_db.execute(text("DELETE FROM user_behavior_logs WHERE user_id = ANY(CAST(:uids AS uuid[]))"), {"uids": USER_IDS})
+    reset_db.execute(text("DELETE FROM orders WHERE user_id = ANY(CAST(:uids AS uuid[]))"), {"uids": USER_IDS})
     reset_db.commit()
     reset_db.close()
 

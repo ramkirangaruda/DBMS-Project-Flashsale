@@ -41,8 +41,12 @@ app/
                                FlaggedOrder / Order.status; train_and_evaluate()
                                is still the synthetic demo/eval harness.
 scripts/
-  seed.py                creates tables + seeds a scarce-stock flash sale
-  seed_large.py          bulk-seeds ~200k orders (COPY, not the ORM) for demo_8_indexing.py
+  seed.py                creates tables + seeds a scarce-stock flash sale under
+                          FIXED demo UUIDs (stable across reseeds); owns only
+                          its own canonical rows + 30 demo users
+  seed_large.py          bulk-seeds ~200k orders (COPY, not the ORM) onto that
+                          same sale for demo_8_indexing.py; purely additive,
+                          owns only its @indexdemo.example users' rows
   run_bot_scoring.py     batch job: scores real UserBehaviorLog rows via
                           bot_detection.score_sessions() -- run after a burst
                           of checkout traffic, see Section 10.2 below
@@ -104,17 +108,54 @@ python -m scripts.run_bot_scoring         # scores the REAL sessions demo_5_benc
                                            # expect: at least one flagged session tied to a real order
 ```
 
-Each script resets its own test data, so they can be run in any order or
-repeatedly for a live demo. Two things worth knowing:
+**`seed.py` and `seed_large.py` are both safe to run, in either order, any
+number of times, without wiping each other's data.** Every demo resets its
+own test data too, so the whole set can be run in any order or repeatedly
+for a live demo. The one hard requirement:
 
-- `scripts/seed.py` resets the **whole** schema (it TRUNCATEs every table),
-  so re-running it also clears `scripts/seed_large.py`'s ~200k synthetic
-  orders. Re-run `python -m scripts.seed_large` before `demo_8_indexing.py`
-  if you've re-seeded since. `scripts/seed_large.py` is the narrower one — it
-  only removes its own tagged data and leaves `seed.py`'s sale alone.
-- `scripts/seed.py` also issues new UUIDs each run and rewrites
-  `scripts/seed_ids.py`, so anything holding an old `sale_id` (a browser tab
-  on `/docs`, a saved curl command) needs the new one.
+- **`demo_8_indexing.py` needs `scripts/seed_large.py` to have been run at
+  least once** — it has nothing to measure against otherwise. It says so
+  rather than failing obscurely.
+- `scripts/seed_large.py` needs `scripts/seed.py` to have been run at least
+  once, since its bulk orders attach to the canonical sale. It checks and
+  tells you. Beyond that first run, order doesn't matter.
+
+### How they stay out of each other's way
+
+Both scripts write to the same tables, so each owns a disjoint slice and
+touches nothing else. The rule is **a row belongs to whoever owns its
+`user_id`**:
+
+| Script | Owns |
+|---|---|
+| `scripts/seed.py` | the fixed-UUID canonical rows, the 30 demo users (`user0..29@example.com`), and any orders/items/logs/flags belonging to **those users** |
+| `scripts/seed_large.py` | its ~50k synthetic users (`@indexdemo.example`) and everything belonging to **those users** |
+
+`seed_large.py`'s bulk orders deliberately target the same `DEMO_SALE_ID`
+as everything else, so `demo_8_indexing` measures its indexes against the
+very sale the other demos use. That's precisely why nothing in this project
+deletes by `sale_id` — the two scripts share a sale, so a sale-scoped
+`DELETE` would cross the boundary. Re-running either script replaces only
+its own slice.
+
+### The demo IDs are constants
+
+`scripts/seed.py` uses hardcoded UUIDs for the canonical entities, so a
+`sale_id` or `user_id` pasted into Swagger/Postman **stays valid across
+reseeds**:
+
+```
+product_id   = 11111111-1111-1111-1111-111111111111
+sale_id      = 22222222-2222-2222-2222-222222222222
+inventory_id = 33333333-3333-3333-3333-333333333333
+user_ids     = d0000000-0000-4000-8000-000000000000 ... -000000000029
+```
+
+Re-running `seed.py` upserts these rather than erroring on a duplicate key,
+restores stock to 5, and clears the sale's Redis counter so the
+`/checkout/redis` fast path isn't left thinking it's sold out. Bulk and
+synthetic rows still use random UUIDs — only the handful of entities a
+human actually copies needs to be stable.
 
 ## Sample result actually produced by demo_5_benchmark.py
 
@@ -302,9 +343,16 @@ construction.
 uvicorn app.main:app --reload --port 8000
 ```
 
-Visit `http://localhost:8000/docs` for interactive Swagger docs. Get a
-`sale_id` and `user_id` from `scripts/seed_ids.py` (generated after you run
-the seed script) to try the checkout endpoints. Each checkout endpoint
+Visit `http://localhost:8000/docs` for interactive Swagger docs. The
+`sale_id` and `user_id` to paste in are the constants above — they don't
+change when you re-seed, so a saved request keeps working:
+
+```
+sale_id = 22222222-2222-2222-2222-222222222222
+user_id = d0000000-0000-4000-8000-000000000000
+```
+
+Each checkout endpoint
 also takes optional `page_load_time`, `checkout_time`, and `ip_address`
 query params if you want to hand-craft a bot-like session to test the
 Section 10.2 scoring path (see above) -- otherwise it synthesizes

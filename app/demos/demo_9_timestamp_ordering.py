@@ -46,7 +46,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 from sqlalchemy import text
 from app.database import SessionLocal
-from scripts.seed_ids import SALE_ID
+from scripts.seed import DEMO_SALE_ID
+
+# Fixed canonical id from scripts/seed.py -- stable across reseeds.
+SALE_ID = str(DEMO_SALE_ID)
 
 _clock = itertools.count(1)
 

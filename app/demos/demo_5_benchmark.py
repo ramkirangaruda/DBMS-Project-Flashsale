@@ -23,7 +23,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 import redis
 from sqlalchemy import text
 from app.database import SessionLocal
-from scripts.seed_ids import SALE_ID, USER_IDS
+from scripts.seed import DEMO_SALE_ID, DEMO_USER_IDS
+
+# Fixed canonical ids from scripts/seed.py -- stable across reseeds.
+SALE_ID = str(DEMO_SALE_ID)
+USER_IDS = [str(u) for u in DEMO_USER_IDS]
 
 N_BUYERS = 40          # concurrent checkout attempts
 STOCK = 5               # units available -- heavy contention (8x oversubscribed)
@@ -47,9 +51,23 @@ def reset(stock=STOCK):
         text("UPDATE inventory SET reserved_stock = 0, total_stock = :s, version = 0 WHERE sale_id = :sid"),
         {"s": stock, "sid": SALE_ID},
     )
-    db.execute(text("DELETE FROM flagged_orders WHERE order_id IN (SELECT id FROM orders WHERE sale_id = :sid)"), {"sid": SALE_ID})
-    db.execute(text("DELETE FROM user_behavior_logs WHERE sale_id = :sid"), {"sid": SALE_ID})
-    db.execute(text("DELETE FROM orders WHERE sale_id = :sid"), {"sid": SALE_ID})
+    # Scoped by USER, not by sale. scripts/seed_large.py's ~200k bulk orders
+    # deliberately sit on this same SALE_ID (so demo_8_indexing has real
+    # volume on it), so "DELETE ... WHERE sale_id = :sid" would silently
+    # destroy them every time this benchmark ran. Only this demo's own
+    # buyers -- the canonical seed.py users -- are in scope here.
+    db.execute(text("""
+        DELETE FROM flagged_orders WHERE order_id IN (
+            SELECT id FROM orders WHERE user_id = ANY(CAST(:uids AS uuid[]))
+        )
+    """), {"uids": USER_IDS})
+    db.execute(text("DELETE FROM user_behavior_logs WHERE user_id = ANY(CAST(:uids AS uuid[]))"), {"uids": USER_IDS})
+    db.execute(text("""
+        DELETE FROM order_items WHERE order_id IN (
+            SELECT id FROM orders WHERE user_id = ANY(CAST(:uids AS uuid[]))
+        )
+    """), {"uids": USER_IDS})
+    db.execute(text("DELETE FROM orders WHERE user_id = ANY(CAST(:uids AS uuid[]))"), {"uids": USER_IDS})
     db.commit()
     db.close()
     r.set(f"stock:{SALE_ID}", stock)

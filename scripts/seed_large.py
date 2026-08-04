@@ -14,11 +14,24 @@ for the Section 6 indexing demo (app/demos/demo_8_indexing.py):
 Uses COPY (via a raw psycopg2 connection) instead of the ORM -- an ORM
 insert loop over six-figure row counts is far too slow to re-run casually.
 
-This data is additive and self-cleaning: everything it creates is tagged
-(products.category = 'synthetic_index_demo', user emails
-@indexdemo.example) so reruns only wipe rows it created itself, leaving
-scripts/seed.py's small scarce-stock demo data (used by demos 1-7)
-untouched.
+ADDITIVE, NEVER DESTRUCTIVE
+---------------------------
+This script inserts on top of whatever is already in the database. It owns
+exactly one slice of the data -- the ~50k synthetic users tagged with the
+@indexdemo.example email domain, and every order / order_item /
+flagged_order belonging to THOSE users -- and a rerun replaces only that
+slice. scripts/seed.py's canonical demo rows (and any orders its 30 demo
+users have placed) are never in range.
+
+Its bulk orders deliberately target scripts/seed.py's DEMO_SALE_ID rather
+than inventing a private sale, so demo_8_indexing measures its indexes
+against the very sale every other demo uses. That is also why ownership is
+keyed on user_id and not sale_id anywhere in this project: the two scripts
+share a sale, so a sale-scoped DELETE would cross the boundary.
+
+Requires scripts/seed.py to have been run at least once (it needs the
+canonical product and sale to hang orders off). It checks, and says so
+plainly rather than failing with a foreign-key error.
 
 Run with: venv/bin/python -m scripts.seed_large
 (takes roughly a minute or two, depending on your machine)
@@ -36,49 +49,88 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from faker import Faker
 from sqlalchemy import text
 from app.database import Base, engine, SessionLocal
+from app import models  # noqa: F401 -- registers every table on Base.metadata so create_all() sees them
+from scripts.seed import DEMO_PRODUCT_ID, DEMO_SALE_ID
 
 fake = Faker()
 random.seed(42)
 
-DEMO_TAG_CATEGORY = "synthetic_index_demo"
-DEMO_EMAIL_DOMAIN = "indexdemo.example"
+DEMO_EMAIL_DOMAIN = "indexdemo.example"   # this script's ownership tag
 
-N_PRODUCTS = 8
-N_SALES = 6
 N_USERS = 50_000
 N_ORDERS = 200_000
 N_HOT_FINGERPRINTS = 50
 HOT_FP_USER_RANGE = (150, 500)          # accounts sharing one "bot farm" fingerprint
 SALE_DURATION_S = 1800                  # 30 minute flash sale window
 ORDER_TIME_MEAN_S = 45                  # exponential decay -- most orders land in the first minute or two
-SALE_WEIGHTS = [0.35, 0.25, 0.15, 0.10, 0.10, 0.05]   # traffic isn't split evenly across sales
 FLAG_RATE = 0.04                        # ~4% of orders get flagged as suspicious
 
 COPY_CHUNK = 20_000
 
 
-def cleanup(conn):
-    print("Cleaning up any previous synthetic_index_demo data (leaves scripts/seed.py's data alone)...")
-    tagged_sales = """
-        SELECT f.id FROM flash_sale_events f
-        JOIN products p ON p.id = f.product_id
-        WHERE p.category = :cat
+class CanonicalDataMissing(RuntimeError):
+    pass
+
+
+def require_seed(db):
     """
-    conn.execute(text(f"""
-        DELETE FROM order_items WHERE order_id IN (
-            SELECT o.id FROM orders o WHERE o.sale_id IN ({tagged_sales})
+    Bulk orders hang off scripts/seed.py's canonical product and sale, so
+    those rows have to exist first. Checked explicitly to give a useful
+    message instead of an opaque foreign-key violation 200k rows later.
+
+    Returns the sale's start_time, which anchors the generated order
+    timestamps to the real sale window.
+    """
+    row = db.execute(
+        text("""
+            SELECT f.start_time
+            FROM flash_sale_events f
+            JOIN products p ON p.id = f.product_id
+            WHERE f.id = :sid AND p.id = :pid
+        """),
+        {"sid": str(DEMO_SALE_ID), "pid": str(DEMO_PRODUCT_ID)},
+    ).fetchone()
+
+    if row is None:
+        raise CanonicalDataMissing(
+            "The canonical demo product/sale rows are missing, so there is "
+            "nothing for these synthetic orders to reference.\n\n"
+            "  Run this first:  python -m scripts.seed\n\n"
+            "(scripts/seed.py creates the fixed DEMO_PRODUCT_ID / DEMO_SALE_ID "
+            "rows that this script's bulk orders attach to. Both scripts are "
+            "additive, so order beyond that first run does not matter.)"
         )
-    """), {"cat": DEMO_TAG_CATEGORY})
+    return row[0]
+
+
+def cleanup(conn):
+    """
+    Remove only THIS script's previous bulk load.
+
+    Ownership is keyed on the synthetic users' email domain, never on
+    sale_id: these orders share scripts/seed.py's DEMO_SALE_ID, so deleting
+    by sale would wipe the canonical demo's own orders too. Everything below
+    is scoped to rows whose user_id belongs to an @indexdemo.example user,
+    children deleted before parents.
+    """
+    print(f"Removing any previous @{DEMO_EMAIL_DOMAIN} bulk data "
+          f"(leaves scripts/seed.py's rows and its users' orders alone)...")
+    owned_users = "SELECT id FROM users WHERE email LIKE :pat"
+    params = {"pat": f"%@{DEMO_EMAIL_DOMAIN}"}
+
     conn.execute(text(f"""
         DELETE FROM flagged_orders WHERE order_id IN (
-            SELECT o.id FROM orders o WHERE o.sale_id IN ({tagged_sales})
+            SELECT id FROM orders WHERE user_id IN ({owned_users})
         )
-    """), {"cat": DEMO_TAG_CATEGORY})
-    conn.execute(text(f"DELETE FROM orders WHERE sale_id IN ({tagged_sales})"), {"cat": DEMO_TAG_CATEGORY})
-    conn.execute(text(f"DELETE FROM inventory WHERE sale_id IN ({tagged_sales})"), {"cat": DEMO_TAG_CATEGORY})
-    conn.execute(text("DELETE FROM flash_sale_events WHERE product_id IN (SELECT id FROM products WHERE category = :cat)"), {"cat": DEMO_TAG_CATEGORY})
-    conn.execute(text("DELETE FROM products WHERE category = :cat"), {"cat": DEMO_TAG_CATEGORY})
-    conn.execute(text("DELETE FROM users WHERE email LIKE :pat"), {"pat": f"%@{DEMO_EMAIL_DOMAIN}"})
+    """), params)
+    conn.execute(text(f"""
+        DELETE FROM order_items WHERE order_id IN (
+            SELECT id FROM orders WHERE user_id IN ({owned_users})
+        )
+    """), params)
+    conn.execute(text(f"DELETE FROM user_behavior_logs WHERE user_id IN ({owned_users})"), params)
+    conn.execute(text(f"DELETE FROM orders WHERE user_id IN ({owned_users})"), params)
+    conn.execute(text("DELETE FROM users WHERE email LIKE :pat"), params)
 
 
 def copy_rows(raw_conn, table, columns, rows):
@@ -99,25 +151,6 @@ def copy_rows(raw_conn, table, columns, rows):
 def copy_in_chunks(raw_conn, table, columns, rows):
     for i in range(0, len(rows), COPY_CHUNK):
         copy_rows(raw_conn, table, columns, rows[i:i + COPY_CHUNK])
-
-
-def gen_products():
-    return [
-        (str(uuid.uuid4()), fake.catch_phrase()[:200], DEMO_TAG_CATEGORY, f"{random.uniform(20, 300):.2f}")
-        for _ in range(N_PRODUCTS)
-    ]
-
-
-def gen_sales(product_ids):
-    now = datetime.now(timezone.utc)
-    sales = []
-    for _ in range(N_SALES):
-        pid = random.choice(product_ids)
-        start = now - timedelta(hours=random.uniform(1, 72))
-        end = start + timedelta(seconds=SALE_DURATION_S)
-        price = f"{random.uniform(10, 250):.2f}"
-        sales.append((str(uuid.uuid4()), pid, start, end, price))
-    return sales
 
 
 def gen_users():
@@ -152,30 +185,33 @@ def sample_offset():
     return min(off, SALE_DURATION_S - 1)
 
 
-def gen_orders_and_items(sales, user_ids):
+def gen_orders_and_items(sale_start, user_ids):
+    """All bulk orders target scripts/seed.py's canonical DEMO_SALE_ID, with
+    timestamps front-loaded after `sale_start` on an exponential decay curve
+    so "orders in the last N seconds" queries are meaningful."""
     orders = []
     items = []
     flagged_ids = []
 
-    sale_order_counts = [round(N_ORDERS * w) for w in SALE_WEIGHTS]
-    sale_order_counts[-1] += N_ORDERS - sum(sale_order_counts)  # fix rounding drift
+    sale_id = str(DEMO_SALE_ID)
+    product_id = str(DEMO_PRODUCT_ID)
 
-    for (sale_id, product_id, start, end, sale_price), n in zip(sales, sale_order_counts):
-        for _ in range(n):
-            oid = str(uuid.uuid4())
-            uid = random.choice(user_ids)
-            created = start + timedelta(seconds=sample_offset())
+    for _ in range(N_ORDERS):
+        oid = str(uuid.uuid4())
+        uid = random.choice(user_ids)
+        created = sale_start + timedelta(seconds=sample_offset())
 
-            if random.random() < FLAG_RATE:
-                status = "flagged"
-                flagged_ids.append(oid)
-            else:
-                status = random.choices(["confirmed", "failed", "pending"], weights=[0.85, 0.10, 0.05])[0]
+        if random.random() < FLAG_RATE:
+            status = "flagged"
+            flagged_ids.append(oid)
+        else:
+            status = random.choices(["confirmed", "failed", "pending"], weights=[0.85, 0.10, 0.05])[0]
 
-            orders.append((oid, uid, sale_id, status, created))
+        orders.append((oid, uid, sale_id, status, created))
 
-            for _ in range(random.randint(1, 3)):
-                items.append((str(uuid.uuid4()), oid, product_id, random.randint(1, 3), sale_price))
+        for _ in range(random.randint(1, 3)):
+            items.append((str(uuid.uuid4()), oid, product_id, random.randint(1, 3),
+                          f"{random.uniform(10, 250):.2f}"))
 
     return orders, items, flagged_ids
 
@@ -194,22 +230,15 @@ def run():
     Base.metadata.create_all(bind=engine)
 
     db = SessionLocal()
+    sale_start = require_seed(db)
     cleanup(db)
     db.commit()
     db.close()
 
     raw_conn = engine.raw_connection()
     try:
-        print(f"Generating {N_PRODUCTS} products, {N_SALES} sale events...")
-        products = gen_products()
-        copy_rows(raw_conn, "products", ["id", "name", "category", "base_price"], products)
-        product_ids = [p[0] for p in products]
-
-        sales = gen_sales(product_ids)
-        copy_rows(raw_conn, "flash_sale_events", ["id", "product_id", "start_time", "end_time", "sale_price"], sales)
-
-        inventory_rows = [(str(uuid.uuid4()), sid, 1000, 0, 0) for sid, *_ in sales]
-        copy_rows(raw_conn, "inventory", ["id", "sale_id", "total_stock", "reserved_stock", "version"], inventory_rows)
+        print(f"Attaching bulk orders to the canonical sale {DEMO_SALE_ID} "
+              f"(started {sale_start:%Y-%m-%d %H:%M:%S %Z})...")
 
         print(f"Generating {N_USERS:,} users ({N_HOT_FINGERPRINTS} hot device-fingerprint clusters)...")
         user_rows, hot_fp, hot_fp_count = gen_users()
@@ -217,7 +246,7 @@ def run():
         user_ids = [u[0] for u in user_rows]
 
         print(f"Generating ~{N_ORDERS:,} orders and their order_items...")
-        orders, items, flagged_ids = gen_orders_and_items(sales, user_ids)
+        orders, items, flagged_ids = gen_orders_and_items(sale_start, user_ids)
         copy_in_chunks(raw_conn, "orders", ["id", "user_id", "sale_id", "status", "created_at"], orders)
         copy_in_chunks(raw_conn, "order_items", ["id", "order_id", "product_id", "quantity", "price_at_purchase"], items)
 
@@ -239,22 +268,26 @@ def run():
     db.commit()
     db.close()
 
-    primary_sale_id, _, primary_start, _, _ = sales[0]  # sales[0] carries the heaviest SALE_WEIGHTS share
+    # Only the randomised bits need writing out -- the sale id is now the
+    # fixed DEMO_SALE_ID, but demo_8_indexing.py still reads it from here so
+    # it keeps a single "has seed_large run yet?" signal.
     with open(os.path.join(os.path.dirname(__file__), "seed_ids_large.py"), "w") as f:
-        f.write(f'SALE_IDS = {[s[0] for s in sales]!r}\n')
-        f.write(f'PRIMARY_SALE_ID = "{primary_sale_id}"\n')
-        f.write(f'PRIMARY_SALE_START = "{primary_start.isoformat()}"\n')
+        f.write(f'PRIMARY_SALE_ID = "{DEMO_SALE_ID}"\n')
+        f.write(f'PRIMARY_SALE_START = "{sale_start.isoformat()}"\n')
         f.write(f'HOT_DEVICE_FINGERPRINT = "{hot_fp}"\n')
         f.write(f'HOT_DEVICE_FINGERPRINT_COUNT = {hot_fp_count}\n')
         f.write(f'TOTAL_ORDERS = {len(orders)}\n')
         f.write(f'TOTAL_USERS = {len(user_ids)}\n')
 
     print("\nseed_large complete.")
-    print(f"  products = {len(products)}, sales = {len(sales)}")
     print(f"  users = {len(user_ids):,}  (hottest device_fingerprint shared by {hot_fp_count} accounts)")
     print(f"  orders = {len(orders):,}, order_items = {len(items):,}, flagged_orders = {len(flagged_rows):,}")
-    print(f"  primary_sale_id (used by demo_8_indexing.py) = {primary_sale_id}")
+    print(f"  all attached to the canonical sale {DEMO_SALE_ID}")
 
 
 if __name__ == "__main__":
-    run()
+    try:
+        run()
+    except CanonicalDataMissing as exc:
+        print(f"\nERROR: {exc}", file=sys.stderr)
+        sys.exit(1)
