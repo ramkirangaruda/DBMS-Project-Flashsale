@@ -25,9 +25,9 @@ import argparse
 import asyncio
 import os
 import random
-import statistics
 import sys
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -55,6 +55,9 @@ class Attempt:
     http_code: int | None = None
     order_id: str | None = None
     detail: str = ""
+    # True when the server served this from the idempotency cache rather than
+    # re-executing checkout (the Idempotent-Replay response header).
+    replayed: bool = False
 
 
 @dataclass
@@ -64,6 +67,7 @@ class StrategyRun:
     n: int
     chaos_fraction: float
     starting_stock: int
+    use_idempotency: bool = False
     attempts: list[Attempt] = field(default_factory=list)
     wall_time_s: float = 0.0
     confirmed_in_db: int = 0          # ground truth, counted server-side
@@ -112,9 +116,48 @@ class StrategyRun:
 
     @property
     def duplicates_both_confirmed(self):
+        """
+        Pairs where both requests came back 'confirmed'.
+
+        NOTE this is NOT the same as "bought twice", and the distinction only
+        appears once idempotency is on. A replayed response is also
+        'confirmed' -- correctly so, it is the original result being handed
+        back -- so this count staying high while replays happen is the
+        mechanism working, not failing. See duplicates_distinct_orders(),
+        which is the metric that actually tracks the bug.
+        """
         return sum(
             1 for v in self.duplicate_pairs.values()
             if sum(1 for a in v if a.status == "confirmed") > 1
+        )
+
+    @property
+    def duplicates_distinct_orders(self):
+        """
+        Pairs that produced TWO DIFFERENT order_ids -- i.e. one purchase
+        intent that really did buy twice. This is the defect idempotency
+        exists to remove, and the number that should go to zero.
+        """
+        n = 0
+        for attempts in self.duplicate_pairs.values():
+            ids = {a.order_id for a in attempts
+                   if a.status == "confirmed" and a.order_id}
+            if len(ids) > 1:
+                n += 1
+        return n
+
+    @property
+    def replayed(self):
+        """Requests the server answered from the idempotency cache."""
+        return sum(1 for a in self.attempts if a.replayed)
+
+    @property
+    def duplicates_replayed(self):
+        """Duplicate pairs where the retry was served from cache -- the
+        mechanism by which double-confirm is meant to be prevented."""
+        return sum(
+            1 for v in self.duplicate_pairs.values()
+            if any(a.replayed for a in v)
         )
 
     def percentile(self, p):
@@ -128,7 +171,7 @@ class StrategyRun:
 # --------------------------------------------------------------------------
 # Read-only database access (counting only -- never writes)
 # --------------------------------------------------------------------------
-def count_confirmed_orders(sale_id, since=None):
+def count_confirmed_orders(sale_id):
     """
     Ground truth for the invariant.
 
@@ -144,16 +187,27 @@ def count_confirmed_orders(sale_id, since=None):
     never saw the confirmation for. Counting client-side would miss exactly
     the orders chaos testing exists to find.
 
+    Counted as an absolute total, and attributed to a run by subtracting a
+    baseline taken just before it starts.
+
+    An earlier version filtered `created_at >= <cutoff captured on this
+    host>` instead, which was subtly and dangerously wrong: the application
+    clock and the PostgreSQL container's clock are not synchronised, so a
+    host-generated cutoff silently excluded real orders whose server-side
+    timestamp fell on the wrong side of the skew. It reported 6 confirmed
+    orders in a run where 38 clients were told "confirmed" -- and because it
+    UNDER-counted, it would have hidden an oversell rather than surfaced one.
+    A before/after delta needs no clock agreement at all.
+
     SELECT only. This function is the sole database contact in this file.
     """
     db = SessionLocal()
     try:
-        sql = "SELECT count(*) FROM orders WHERE sale_id = :sid AND status = 'confirmed'"
-        params = {"sid": sale_id}
-        if since is not None:
-            sql += " AND created_at >= :since"
-            params["since"] = since
-        return db.execute(text(sql), params).scalar() or 0
+        return db.execute(
+            text("SELECT count(*) FROM orders "
+                 "WHERE sale_id = :sid AND status = 'confirmed'"),
+            {"sid": sale_id},
+        ).scalar() or 0
     finally:
         db.close()
 
@@ -226,8 +280,16 @@ class Chaos:
 
 
 async def one_purchase(client, strategy, sale_id, user_id, logical_id,
-                       plan, barrier, results, is_duplicate=False):
-    """A single buyer. Waits on the barrier so everyone fires together."""
+                       plan, barrier, results, is_duplicate=False,
+                       idem_key=None):
+    """
+    A single buyer. Waits on the barrier so everyone fires together.
+
+    `idem_key` is one UUID per LOGICAL purchase intent, reused verbatim by
+    that intent's retry. That is the whole point: a retry is the same
+    purchase being asked for again, not a second purchase. Passing None
+    reproduces the original behaviour (two independent requests).
+    """
     await barrier.wait()
 
     if plan["delay"]:
@@ -235,6 +297,7 @@ async def one_purchase(client, strategy, sale_id, user_id, logical_id,
 
     started = time.perf_counter()
     params = {"sale_id": sale_id, "user_id": user_id}
+    headers = {"Idempotency-Key": idem_key} if idem_key else None
     try:
         if plan["abort"] and not is_duplicate:
             # Cancel mid-flight: the connection dies before the response is
@@ -242,7 +305,7 @@ async def one_purchase(client, strategy, sale_id, user_id, logical_id,
             # which is exactly the ambiguity being tested.
             try:
                 await asyncio.wait_for(
-                    client.post(f"/checkout/{strategy}", params=params),
+                    client.post(f"/checkout/{strategy}", params=params, headers=headers),
                     timeout=random.uniform(0.001, 0.02),
                 )
             except (asyncio.TimeoutError, httpx.HTTPError):
@@ -251,7 +314,7 @@ async def one_purchase(client, strategy, sale_id, user_id, logical_id,
                 return
             # It answered before we could cut it -- fall through as normal.
 
-        resp = await client.post(f"/checkout/{strategy}", params=params)
+        resp = await client.post(f"/checkout/{strategy}", params=params, headers=headers)
         elapsed = (time.perf_counter() - started) * 1000
         try:
             body = resp.json()
@@ -261,6 +324,7 @@ async def one_purchase(client, strategy, sale_id, user_id, logical_id,
             logical_id, is_duplicate,
             body.get("status", "failed"), elapsed, resp.status_code,
             body.get("order_id"), body.get("message", "")[:120],
+            replayed=resp.headers.get("idempotent-replay", "").lower() == "true",
         ))
     except Exception as exc:                                   # noqa: BLE001
         elapsed = (time.perf_counter() - started) * 1000
@@ -268,10 +332,35 @@ async def one_purchase(client, strategy, sale_id, user_id, logical_id,
                                detail=f"{type(exc).__name__}: {exc}"[:120]))
 
 
+def make_idem_key(run_nonce, strategy, logical_id):
+    """
+    One stable UUID per (invocation, strategy, logical buyer).
+
+    Deliberately NOT drawn from the seeded RNG. Seeded keys look attractive
+    for reproducibility but are actively wrong here, in two ways:
+
+      * Across invocations -- re-running the same command would regenerate
+        the same keys, and the 24h cache would replay the PREVIOUS run's
+        responses. The "after" arm would create zero orders and look like a
+        catastrophic regression rather than a repeat.
+      * Across strategies -- every strategy seeds its RNG identically, so
+        `--strategy all` would have pessimistic's keys collide with
+        optimistic's, and strategies 2 and 3 would just replay strategy 1.
+
+    A per-invocation nonce fixes both while keeping the property that
+    actually matters for the experiment: BOTH ARMS of a --compare share the
+    nonce, so the with/without comparison still sends identical keys.
+    """
+    return str(uuid.uuid5(uuid.NAMESPACE_URL,
+                          f"chaos:{run_nonce}:{strategy}:{logical_id}"))
+
+
 async def run_strategy(base_url, strategy, sale_id, n, chaos_fraction,
-                       stock, user_ids, admin_token, seed):
+                       stock, user_ids, admin_token, seed, use_idempotency=True,
+                       run_nonce=""):
     run = StrategyRun(strategy=strategy, sale_id=sale_id, n=n,
-                      chaos_fraction=chaos_fraction, starting_stock=stock)
+                      chaos_fraction=chaos_fraction, starting_stock=stock,
+                      use_idempotency=use_idempotency)
     rng = random.Random(seed)
     chaos = Chaos(chaos_fraction, rng)
 
@@ -283,8 +372,8 @@ async def run_strategy(base_url, strategy, sale_id, n, chaos_fraction,
             run.error = f"could not reset sale: {exc}"
             return run
 
-        # Everything created from this instant belongs to this run.
-        cutoff = datetime.now(timezone.utc)
+        # Baseline: everything above this count belongs to this run. Clock
+        # agreement between host and database is deliberately not required.
         run.baseline_orders = count_confirmed_orders(sale_id)
         await asyncio.sleep(0.05)
 
@@ -294,14 +383,20 @@ async def run_strategy(base_url, strategy, sale_id, n, chaos_fraction,
         for i in range(n):
             plan = chaos.roll()
             uid = user_ids[i % len(user_ids)]
+            # One key per logical purchase INTENT -- see make_idem_key().
+            idem_key = make_idem_key(run_nonce, strategy, i) if use_idempotency else None
             tasks.append(one_purchase(client, strategy, sale_id, uid, i, plan,
-                                      barrier, results))
+                                      barrier, results, idem_key=idem_key))
             if plan["duplicate"]:
-                # Same logical buyer, second independent request.
+                # The SAME logical buyer retrying -- same key, so with
+                # idempotency on this is one purchase asked for twice, and
+                # with it off it is two independent purchases (the old
+                # behaviour, kept for the before/after comparison).
                 tasks.append(one_purchase(client, strategy, sale_id, uid, i,
                                           {"delay": rng.uniform(0.0, 0.05),
                                            "abort": False, "duplicate": False},
-                                          barrier, results, is_duplicate=True))
+                                          barrier, results, is_duplicate=True,
+                                          idem_key=idem_key))
 
         gathered = asyncio.gather(*tasks)
         t0 = time.perf_counter()
@@ -312,7 +407,7 @@ async def run_strategy(base_url, strategy, sale_id, n, chaos_fraction,
         run.attempts = results
         # Let any in-flight commit from an aborted connection land.
         await asyncio.sleep(0.75)
-        run.confirmed_in_db = count_confirmed_orders(sale_id, since=cutoff)
+        run.confirmed_in_db = count_confirmed_orders(sale_id) - run.baseline_orders
 
         try:
             body = (await client.get(f"/sales/{sale_id}")).json()
@@ -367,24 +462,107 @@ def build_report(runs, args, sale_names):
     )
 
     L.append("## Summary\n")
-    L.append("| Strategy | N | Stock | Confirmed (DB) | Oversold | Invariant | "
-             "Sold out | Aborted | Failed | Dup pairs | Dup both OK | "
-             "p50 | p95 | p99 | Wall |")
-    L.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    L.append("| Strategy | Idem | N | Stock | Confirmed (DB) | Oversold | Invariant | "
+             "Sold out | Aborted | Failed | Dup pairs | Bought twice | Both said OK | "
+             "Replayed | p50 | p95 | p99 | Wall |")
+    L.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for r in runs:
+        idem = "on" if r.use_idempotency else "off"
         if r.error:
-            L.append(f"| {r.strategy} | {r.n} | {r.starting_stock} | "
-                     f"ERROR | -- | -- | -- | -- | -- | -- | -- | -- | -- | -- | -- |")
+            L.append(f"| {r.strategy} | {idem} | {r.n} | {r.starting_stock} | ERROR |"
+                     + " -- |" * 13)
             continue
         L.append(
-            f"| `{r.strategy}` | {r.n} | {r.starting_stock} | **{r.confirmed_in_db}** | "
-            f"{r.oversold} | {'✅ HOLDS' if r.invariant_holds else '❌ VIOLATED'} | "
+            f"| `{r.strategy}` | {idem} | {r.n} | {r.starting_stock} | "
+            f"**{r.confirmed_in_db}** | {r.oversold} | "
+            f"{'✅ HOLDS' if r.invariant_holds else '❌ VIOLATED'} | "
             f"{r.sold_out} | {r.aborted} | {r.failed} | {len(r.duplicate_pairs)} | "
-            f"{r.duplicates_both_confirmed} | "
+            f"**{r.duplicates_distinct_orders}** | {r.duplicates_both_confirmed} | "
+            f"{r.replayed} | "
             f"{fmt(r.percentile(50), 'ms')} | {fmt(r.percentile(95), 'ms')} | "
             f"{fmt(r.percentile(99), 'ms')} | {r.wall_time_s:.2f}s |"
         )
     L.append("")
+    L.append(
+        "**Bought twice** = duplicate pairs that produced two different `order_id`s "
+        "(the real defect). **Both said OK** = pairs where both responses read "
+        "`confirmed`, which after idempotency includes replays of the *same* order "
+        "and is therefore expected to stay high. Read the first column.\n"
+    )
+
+    # ---- before/after, only when both arms were run at the same seed ----
+    paired = {}
+    for r in runs:
+        if not r.error:
+            paired.setdefault(r.strategy, {})[r.use_idempotency] = r
+    both = {k: v for k, v in paired.items() if False in v and True in v}
+    if both:
+        L.append("## Before / after: Idempotency-Key\n")
+        L.append(
+            f"Each strategy run twice at seed **{args.seed}** with identical "
+            f"parameters. The chaos plan is seeded, so both arms send the same "
+            f"requests in the same order, and both arms share one "
+            f"per-invocation key namespace, so a retry in either arm carries "
+            f"the same key its original would have. The only difference is "
+            f"whether that header is sent at all. Same experiment, one "
+            f"variable.\n"
+        )
+        L.append(
+            "(Keys are derived from a nonce generated fresh each invocation "
+            "rather than from the seed. Seeded keys would be reproducible "
+            "across *runs*, which sounds desirable but means a re-run replays "
+            "the previous run's 24h cache and creates zero orders -- and with "
+            "`--strategy all`, every strategy would share one key space and "
+            "strategies 2 and 3 would replay strategy 1.)\n"
+        )
+        L.append("| Strategy | Dup pairs | **Bought twice BEFORE** | **Bought twice AFTER** | "
+                 "Retries served from cache | Confirmed (DB) before → after | Invariant |")
+        L.append("|---|---|---|---|---|---|---|")
+        for st, arm in both.items():
+            before, after = arm[False], arm[True]
+            ok = "✅" if (after.invariant_holds and before.invariant_holds) else "❌"
+            L.append(
+                f"| `{st}` | {len(before.duplicate_pairs)} | "
+                f"**{before.duplicates_distinct_orders}** | "
+                f"**{after.duplicates_distinct_orders}** | {after.replayed} | "
+                f"{before.confirmed_in_db} → {after.confirmed_in_db} | {ok} |"
+            )
+        L.append("")
+        L.append(
+            '> "Bought twice" counts duplicate pairs that produced **two different '
+            '`order_id`s** — one intent that really did purchase twice. That is the '
+            "defect, and it is deliberately not the same as *both responses said "
+            '"confirmed"*: once idempotency is on, a replayed response is also '
+            "`confirmed`, because it is the original result being handed back. Both "
+            "counts appear in the summary table above; only this one tracks the "
+            "bug.\n"
+        )
+
+        fixed = [s for s, a in both.items()
+                 if a[False].duplicates_distinct_orders > 0
+                 and a[True].duplicates_distinct_orders == 0]
+        none_before = all(a[False].duplicates_distinct_orders == 0 for a in both.values())
+        if fixed:
+            L.append(
+                f"**{', '.join('`'+s+'`' for s in fixed)}: double-confirms went to zero.** "
+                f"The retry now hits `idempotency:{{key}}` and the cached response is "
+                f"replayed verbatim -- same `order_id`, same status -- without the "
+                f"checkout handler running a second time.\n"
+            )
+        elif none_before:
+            L.append(
+                "**No double-confirms in either arm at this configuration.** That is "
+                "not evidence idempotency worked -- at this contention level the "
+                "retry loses the race for the last unit and is rejected as sold out "
+                "regardless. Scarcity, not deduplication, is doing the work. Use the "
+                "low-contention control below, where stock is not the limiting "
+                "factor, to see the difference.\n"
+            )
+        L.append(
+            "The `Replayed` column counts responses the server served from cache "
+            "(the `Idempotent-Replay: true` header). It is the direct evidence that "
+            "the mechanism engaged, as opposed to inferring it from an absence.\n"
+        )
 
     verdict = "❌ **AT LEAST ONE INVARIANT VIOLATION**" if any_violation \
         else "✅ **All invariants held.**"
@@ -416,6 +594,13 @@ def build_report(runs, args, sale_names):
             L.append(f"  - **{gap} order(s) committed that no client saw confirmed** — "
                      f"aborted connections whose transaction still landed. Invisible "
                      f"to the buyer, real in the database.")
+        elif gap < 0:
+            L.append(f"  - **{-gap} more client(s) were told 'confirmed' than there are "
+                     f"orders** — and that is the idempotency layer working, not a "
+                     f"discrepancy. A replayed retry legitimately reports the "
+                     f"confirmation of the order its first attempt already created, "
+                     f"so N confirmations can correspond to fewer than N orders. "
+                     f"Cross-check: {r.replayed} response(s) were served from cache.")
         L.append(f"- Rejected as sold out: {r.sold_out}")
         L.append(f"- Aborted mid-flight (chaos): {r.aborted}")
         L.append(f"- Failed / errored: {r.failed}")
@@ -520,23 +705,39 @@ async def main_async(args):
     print(f"Chaos verification — N={args.n}, chaos={args.chaos:.0%}, stock={args.stock}")
     print(f"API: {args.base_url}   users available: {len(user_ids)}\n")
 
+    # --compare runs each strategy twice at the SAME seed: identical chaos
+    # plan, identical keys, the only difference being whether the retry
+    # carries the Idempotency-Key header. That is what makes the before/after
+    # a controlled comparison rather than two unrelated runs.
+    arms = [False, True] if args.compare else [args.idempotency]
+
+    # Shared by both arms (so the comparison is controlled) but new every
+    # invocation (so a re-run never replays the last run's cache).
+    run_nonce = uuid.uuid4().hex
+
     runs = []
     for strategy in targets:
         sale_id = assigned[strategy]
-        print(f"[{strategy}] sale {sale_id[:8]}… resetting to {args.stock} units, "
-              f"firing {args.n} buyers…", flush=True)
-        run = await run_strategy(args.base_url, strategy, sale_id, args.n,
-                                 args.chaos, args.stock, user_ids,
-                                 args.admin_token, args.seed)
-        runs.append(run)
-        if run.error:
-            print(f"  ERROR: {run.error}\n")
-            continue
-        flag = "HOLDS" if run.invariant_holds else "VIOLATED"
-        print(f"  confirmed(DB)={run.confirmed_in_db}/{run.starting_stock}  "
-              f"sold_out={run.sold_out}  aborted={run.aborted}  "
-              f"dup_both_ok={run.duplicates_both_confirmed}  "
-              f"wall={run.wall_time_s:.2f}s  INVARIANT {flag}\n", flush=True)
+        for use_idem in arms:
+            tag = "with idempotency" if use_idem else "no idempotency"
+            print(f"[{strategy}] ({tag}) sale {sale_id[:8]}… resetting to "
+                  f"{args.stock} units, firing {args.n} buyers…", flush=True)
+            run = await run_strategy(args.base_url, strategy, sale_id, args.n,
+                                     args.chaos, args.stock, user_ids,
+                                     args.admin_token, args.seed,
+                                     use_idempotency=use_idem,
+                                     run_nonce=run_nonce)
+            runs.append(run)
+            if run.error:
+                print(f"  ERROR: {run.error}\n")
+                continue
+            flag = "HOLDS" if run.invariant_holds else "VIOLATED"
+            print(f"  confirmed(DB)={run.confirmed_in_db}/{run.starting_stock}  "
+                  f"sold_out={run.sold_out}  aborted={run.aborted}  "
+                  f"dup_pairs={len(run.duplicate_pairs)}  "
+                  f"bought_twice={run.duplicates_distinct_orders}  "
+                  f"replayed={run.replayed}  "
+                  f"wall={run.wall_time_s:.2f}s  INVARIANT {flag}\n", flush=True)
 
     out_path = os.path.abspath(args.out)
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
@@ -569,6 +770,12 @@ def main():
     p.add_argument("--seed", type=int, default=1337, help="RNG seed for reproducible chaos")
     p.add_argument("--out", default="results/chaos_verification_report.md",
                    help="report output path")
+    p.add_argument("--no-idempotency", dest="idempotency", action="store_false",
+                   help="send retries WITHOUT an Idempotency-Key (pre-idempotency behaviour)")
+    p.add_argument("--compare", action="store_true",
+                   help="run each strategy twice at the same seed -- once without "
+                        "and once with Idempotency-Key -- for a controlled before/after")
+    p.set_defaults(idempotency=True)
     args = p.parse_args()
 
     if not 0.0 <= args.chaos <= 1.0:

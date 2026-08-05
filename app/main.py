@@ -22,6 +22,7 @@ import redis
 
 from app.database import get_db, Base, engine, SessionLocal
 from app import models
+from app.idempotency import install as install_idempotency
 from app.ml.demand_forecast import get_forecast_sample
 
 app = FastAPI(
@@ -58,6 +59,13 @@ r = redis.Redis(
     port=int(os.getenv("REDIS_PORT", "6390")),  # matches docker-compose.yml (6390:6379)
     decode_responses=True,
 )
+
+# Optional Idempotency-Key support for /checkout/*. Purely additive: a request
+# without the header behaves exactly as before, and the checkout handlers
+# below are untouched -- this only decides whether a request reaches them.
+# Registered here rather than beside the CORS middleware because it needs the
+# Redis client above. See app/idempotency.py.
+install_idempotency(app, r)
 
 
 def log_checkout_attempt(user_id, sale_id, order_id, page_load_time, checkout_time, ip_address):
