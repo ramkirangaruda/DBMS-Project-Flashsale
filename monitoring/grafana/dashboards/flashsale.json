@@ -1,0 +1,290 @@
+{
+  "uid": "flashsale-chaos",
+  "title": "Flash-Sale Engine — Concurrency & Chaos",
+  "tags": ["flashsale", "chaos", "concurrency"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "2s",
+  "time": { "from": "now-15m", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Checkout throughput by strategy",
+      "description": "Requests/sec per strategy, split by outcome. During a chaos run the sold_out series dwarfs confirmed — that is the point: 200 buyers, 5 units.",
+      "datasource": { "type": "prometheus", "uid": "flashsale-prom" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["max", "sum"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "flashsale-prom" },
+          "expr": "sum by (strategy, outcome) (rate(checkout_requests_total[30s]))",
+          "legendFormat": "{{strategy}} · {{outcome}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Checkout latency p50 / p95 / p99 by strategy",
+      "description": "Server-side latency. Pessimistic queues under contention, so its tail climbs; Redis stays flat because most rejections never reach PostgreSQL. Replayed idempotent responses are excluded — they never ran checkout.",
+      "datasource": { "type": "prometheus", "uid": "flashsale-prom" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "flashsale-prom" },
+          "expr": "histogram_quantile(0.50, sum by (le, strategy) (rate(checkout_latency_seconds_bucket[30s])))",
+          "legendFormat": "p50 {{strategy}}"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "flashsale-prom" },
+          "expr": "histogram_quantile(0.95, sum by (le, strategy) (rate(checkout_latency_seconds_bucket[30s])))",
+          "legendFormat": "p95 {{strategy}}"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "flashsale-prom" },
+          "expr": "histogram_quantile(0.99, sum by (le, strategy) (rate(checkout_latency_seconds_bucket[30s])))",
+          "legendFormat": "p99 {{strategy}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "OCC version-conflict retries (optimistic)",
+      "description": "Losing writers told to retry. A spike here is optimistic concurrency control WORKING under contention, not an error rate. Expect this to be flat-zero for pessimistic and redis.",
+      "datasource": { "type": "prometheus", "uid": "flashsale-prom" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "bars",
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "showPoints": "never"
+          },
+          "color": { "mode": "fixed", "fixedColor": "orange" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "flashsale-prom" },
+          "expr": "sum by (strategy) (rate(checkout_retries_total[30s]))",
+          "legendFormat": "{{strategy}} retries/s"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Idempotency cache hit rate",
+      "description": "Share of keyed requests answered from cache instead of re-executing checkout. Each hit is a retry that did NOT become a second purchase. Null when no keyed traffic is flowing.",
+      "datasource": { "type": "prometheus", "uid": "flashsale-prom" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "showPoints": "auto",
+            "spanNulls": false
+          },
+          "color": { "mode": "fixed", "fixedColor": "green" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["mean"] },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "flashsale-prom" },
+          "expr": "sum(rate(idempotency_cache_hits_total[30s])) / (sum(rate(idempotency_cache_hits_total[30s])) + sum(rate(idempotency_cache_misses_total[30s])))",
+          "legendFormat": "hit rate"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Idempotency hits vs misses (raw)",
+      "description": "The two counters behind the rate above, so a run with zero keyed traffic is visibly zero rather than an ambiguous gap.",
+      "datasource": { "type": "prometheus", "uid": "flashsale-prom" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["max"] },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "flashsale-prom" },
+          "expr": "sum(rate(idempotency_cache_hits_total[30s]))",
+          "legendFormat": "hits/s"
+        },
+        {
+          "refId": "B",
+          "datasource": { "type": "prometheus", "uid": "flashsale-prom" },
+          "expr": "sum(rate(idempotency_cache_misses_total[30s]))",
+          "legendFormat": "misses/s"
+        },
+        {
+          "refId": "C",
+          "datasource": { "type": "prometheus", "uid": "flashsale-prom" },
+          "expr": "sum(rate(redis_reservation_races_total[30s]))",
+          "legendFormat": "reservation races/s (lower bound)"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "CAP divergence — what PostgreSQL believes vs what Redis believes",
+      "description": "Availability per store, per sale. They are ALLOWED to disagree: /checkout/redis never decrements inventory.reserved_stock, and the SQL strategies never touch the Redis counter. A gap opening here is the CAP trade-off happening in real time, not a bug.",
+      "datasource": { "type": "prometheus", "uid": "flashsale-prom" },
+      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stepAfter": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byRegexp", "options": ".*sql.*" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }]
+          },
+          {
+            "matcher": { "id": "byRegexp", "options": ".*redis.*" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "min"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "flashsale-prom" },
+          "expr": "flashsale_sale_available",
+          "legendFormat": "{{product}} · {{source}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Live divergence |sql − redis|",
+      "description": "Magnitude of the disagreement between the two stores. Shown as an absolute value so a divergence in either direction colours the same — the signed panel to the left shows WHICH store is ahead. Non-zero is not 'broken'; it reflects which strategy has been selling.",
+      "datasource": { "type": "prometheus", "uid": "flashsale-prom" },
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "flashsale-prom" },
+          "expr": "abs(flashsale_sale_divergence)",
+          "legendFormat": "{{product}}"
+        }
+      ]
+    }
+  ]
+}

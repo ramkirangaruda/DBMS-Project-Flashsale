@@ -27,5 +27,60 @@ services:
       retries: 20
       start_period: 2s
 
+  # ---------------------------------------------------------------------
+  # Observability. Appended -- the postgres and redis definitions above are
+  # untouched. Both scrape/read only; neither is required for the app to run.
+  #
+  # The FastAPI app runs on the HOST (python -m app.main), not in a
+  # container, so Prometheus reaches it via host.docker.internal. The
+  # extra_hosts line makes that resolve on Linux too, where it is not
+  # built in the way it is on Docker Desktop.
+  # ---------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=6h"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    environment:
+      # Anonymous admin: this is a local demo dashboard with no secrets in
+      # it, and a login wall would only get in the way of showing it on a
+      # projector or screenshotting it. Do not copy this to anything real.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Admin"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_USERS_DEFAULT_THEME: "dark"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafanadata:/var/lib/grafana
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
 volumes:
   pgdata:
+  promdata:
+  grafanadata:

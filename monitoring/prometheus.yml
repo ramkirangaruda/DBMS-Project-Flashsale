@@ -1,0 +1,24 @@
+# Prometheus scrape config for the flash-sale engine.
+#
+# A chaos run lasts seconds, not minutes, so the scrape interval is short --
+# at the 15s default an entire N=200 burst would land inside a single sample
+# and the retry spike this exists to show would be invisible.
+global:
+  scrape_interval: 2s
+  evaluation_interval: 5s
+  external_labels:
+    project: flashsale-engine
+
+scrape_configs:
+  - job_name: flashsale-api
+    metrics_path: /metrics
+    static_configs:
+      # The API runs on the host, not in a container.
+      # Override with PROM_API_TARGET if you move it.
+      - targets: ["host.docker.internal:8010"]
+        labels:
+          service: flashsale-api
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

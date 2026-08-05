@@ -23,6 +23,7 @@ import redis
 from app.database import get_db, Base, engine, SessionLocal
 from app import models
 from app.idempotency import install as install_idempotency
+from app.metrics import install as install_metrics
 from app.ml.demand_forecast import get_forecast_sample
 
 app = FastAPI(
@@ -66,6 +67,12 @@ r = redis.Redis(
 # Registered here rather than beside the CORS middleware because it needs the
 # Redis client above. See app/idempotency.py.
 install_idempotency(app, r)
+
+# Prometheus instrumentation at /metrics. Added AFTER the idempotency
+# middleware so it sits outside it and can see the Idempotent-Replay header
+# on the final response -- that header is how cache hits are counted without
+# reaching into app/idempotency.py. See app/metrics.py.
+install_metrics(app, r, SessionLocal)
 
 
 def log_checkout_attempt(user_id, sale_id, order_id, page_load_time, checkout_time, ip_address):
