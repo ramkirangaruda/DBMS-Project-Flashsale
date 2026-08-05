@@ -24,6 +24,7 @@ from app.database import get_db, Base, engine, SessionLocal
 from app import models
 from app.idempotency import install as install_idempotency
 from app.metrics import install as install_metrics
+from app.tracing import install as install_tracing
 from app.ml.demand_forecast import get_forecast_sample
 
 app = FastAPI(
@@ -73,6 +74,16 @@ install_idempotency(app, r)
 # on the final response -- that header is how cache hits are counted without
 # reaching into app/idempotency.py. See app/metrics.py.
 install_metrics(app, r, SessionLocal)
+
+# OpenTelemetry tracing, exported to Jaeger. Registered LAST so its middleware
+# is the outermost one: the server span then covers the whole exchange,
+# including the idempotency short-circuit -- which is the entire point of the
+# cache-hit trace, since a replayed request never reaches a checkout handler
+# and would otherwise produce no span at all.
+#
+# Auto-instrumentation only; there is not one hand-written span inside any
+# checkout handler. See app/tracing.py.
+install_tracing(app, engine=engine)
 
 
 def log_checkout_attempt(user_id, sale_id, order_id, page_load_time, checkout_time, ip_address):

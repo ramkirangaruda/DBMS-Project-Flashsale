@@ -1,0 +1,344 @@
+{
+  "cache": {
+    "trace_id": "bc23c3e297031fe7e153c3d1c2544c22",
+    "meta": {
+      "replayed": true,
+      "same_order_id": true,
+      "prime_trace_id": "e26e24d5412aabf4aa7b923fcc01fb8b",
+      "prime_total_ms": 43.21
+    },
+    "breakdown": {
+      "trace_id": "bc23c3e297031fe7e153c3d1c2544c22",
+      "root": "purchase_intent redis (retry, same key)",
+      "root_service": "flashsale-capture-harness",
+      "total_ms": 12.32,
+      "span_count": 4,
+      "server_spans": [
+        {
+          "name": "POST /checkout/redis",
+          "service": "flashsale-engine",
+          "duration_ms": 3.0,
+          "start_offset_ms": 6.02,
+          "statement": "",
+          "system": "",
+          "http_status": 200,
+          "span_id": "680301a25537fbed"
+        }
+      ],
+      "server_total_ms": 3.0,
+      "children": [
+        {
+          "name": "GET",
+          "service": "flashsale-engine",
+          "duration_ms": 1.0,
+          "start_offset_ms": 7.02,
+          "statement": "GET ?",
+          "system": "redis",
+          "http_status": null,
+          "span_id": "226a2a5417173af7",
+          "under": "POST /checkout/redis"
+        }
+      ],
+      "accounted_ms": 1.0,
+      "residual_ms": 2.0
+    },
+    "prometheus": {
+      "p50": 414.6,
+      "p95": 918.0,
+      "p99": 983.6
+    }
+  },
+  "lock": {
+    "trace_id": "08eb856c9624ff136999b714c5972609",
+    "outcome": {
+      "status": "confirmed",
+      "order_id": "3ff1f86c-65fa-4ee8-bad6-c3ae3fb2bb63",
+      "message": "Order confirmed.",
+      "strategy": "pessimistic"
+    },
+    "breakdown": {
+      "trace_id": "08eb856c9624ff136999b714c5972609",
+      "root": "purchase_intent pessimistic",
+      "root_service": "flashsale-capture-harness",
+      "total_ms": 426.54,
+      "span_count": 10,
+      "server_spans": [
+        {
+          "name": "POST /checkout/pessimistic",
+          "service": "flashsale-engine",
+          "duration_ms": 176.17,
+          "start_offset_ms": 247.85,
+          "statement": "",
+          "system": "",
+          "http_status": 200,
+          "span_id": "ac5458b3f9a2b0f8"
+        }
+      ],
+      "server_total_ms": 176.17,
+      "children": [
+        {
+          "name": "connect",
+          "service": "flashsale-engine",
+          "duration_ms": 0.0,
+          "start_offset_ms": 305.98,
+          "statement": "",
+          "system": "postgresql",
+          "http_status": null,
+          "span_id": "6ebb28e0a65a48b5",
+          "under": "POST /checkout/pessimistic"
+        },
+        {
+          "name": "BEGIN flashsale",
+          "service": "flashsale-engine",
+          "duration_ms": 4.0,
+          "start_offset_ms": 305.98,
+          "statement": "BEGIN",
+          "system": "postgresql",
+          "http_status": null,
+          "span_id": "4cc6064e25115b45",
+          "under": "POST /checkout/pessimistic"
+        },
+        {
+          "name": "SELECT flashsale",
+          "service": "flashsale-engine",
+          "duration_ms": 93.95,
+          "start_offset_ms": 309.98,
+          "statement": "SELECT id, total_stock, reserved_stock FROM inventory WHERE sale_id = %(sid)s FOR UPDATE",
+          "system": "postgresql",
+          "http_status": null,
+          "span_id": "d66e33d47e01c267",
+          "under": "POST /checkout/pessimistic"
+        },
+        {
+          "name": "UPDATE flashsale",
+          "service": "flashsale-engine",
+          "duration_ms": 3.53,
+          "start_offset_ms": 404.46,
+          "statement": "UPDATE inventory SET reserved_stock = reserved_stock + 1 WHERE id = %(id)s",
+          "system": "postgresql",
+          "http_status": null,
+          "span_id": "d7c4717963012ef3",
+          "under": "POST /checkout/pessimistic"
+        },
+        {
+          "name": "INSERT flashsale",
+          "service": "flashsale-engine",
+          "duration_ms": 1.0,
+          "start_offset_ms": 408.98,
+          "statement": "INSERT INTO orders (id, user_id, sale_id, status, created_at) VALUES (gen_random_uuid(), %(uid)s, %(sid)s, 'confirmed', now()) RETURNING id",
+          "system": "postgresql",
+          "http_status": null,
+          "span_id": "ab3cc87697f83d2a",
+          "under": "POST /checkout/pessimistic"
+        },
+        {
+          "name": "connect",
+          "service": "flashsale-engine",
+          "duration_ms": 0.0,
+          "start_offset_ms": 414.57,
+          "statement": "",
+          "system": "postgresql",
+          "http_status": null,
+          "span_id": "5d3ddbbe7e14d49d",
+          "under": "POST /checkout/pessimistic"
+        },
+        {
+          "name": "INSERT flashsale",
+          "service": "flashsale-engine",
+          "duration_ms": 3.02,
+          "start_offset_ms": 416.1,
+          "statement": "INSERT INTO user_behavior_logs (id, user_id, sale_id, order_id, page_load_time, checkout_time, ip_address, session_duration_ms) VALUES (gen_random_uuid(), %(uid)s, %(sid)s, %(oid)s, %(plt)s, %(ct)s, %(ip)s, %(dur)s)",
+          "system": "postgresql",
+          "http_status": null,
+          "span_id": "fd7ad8097bb1a1db",
+          "under": "POST /checkout/pessimistic"
+        }
+      ],
+      "accounted_ms": 105.5,
+      "residual_ms": 70.67
+    },
+    "lock_share": 0.5333,
+    "prometheus": {
+      "p50": 344.9,
+      "p95": 827.5,
+      "p99": 965.5
+    }
+  },
+  "retry": {
+    "trace_id": "c00363f0f949d6d095f3536b5f52a79c",
+    "attempts": [
+      {
+        "attempt": 1,
+        "status": "failed",
+        "http": 409,
+        "version_conflict": true
+      },
+      {
+        "attempt": 2,
+        "status": "confirmed",
+        "http": 200,
+        "version_conflict": false
+      }
+    ],
+    "breakdown": {
+      "trace_id": "c00363f0f949d6d095f3536b5f52a79c",
+      "root": "purchase_intent optimistic",
+      "root_service": "flashsale-capture-harness",
+      "total_ms": 1107.54,
+      "span_count": 16,
+      "server_spans": [
+        {
+          "name": "POST /checkout/optimistic",
+          "service": "flashsale-engine",
+          "duration_ms": 292.75,
+          "start_offset_ms": 282.35,
+          "statement": "",
+          "system": "",
+          "http_status": 409,
+          "span_id": "7c2f319619ad57bc"
+        },
+        {
+          "name": "POST /checkout/optimistic",
+          "service": "flashsale-engine",
+          "duration_ms": 52.77,
+          "start_offset_ms": 1046.27,
+          "statement": "",
+          "system": "",
+          "http_status": 200,
+          "span_id": "b1d76daab3554b58"
+        }
+      ],
+      "server_total_ms": 345.52,
+      "children": [
+        {
+          "name": "connect",
+          "service": "flashsale-engine",
+          "duration_ms": 49.31,
+          "start_offset_ms": 365.87,
+          "statement": "",
+          "system": "postgresql",
+          "http_status": null,
+          "span_id": "2a54e755f8caeac0",
+          "under": "POST /checkout/optimistic"
+        },
+        {
+          "name": "SELECT flashsale",
+          "service": "flashsale-engine",
+          "duration_ms": 5.51,
+          "start_offset_ms": 415.19,
+          "statement": "SELECT id, total_stock, reserved_stock, version FROM inventory WHERE sale_id = %(sid)s",
+          "system": "postgresql",
+          "http_status": null,
+          "span_id": "f0e87a0e863196f9",
+          "under": "POST /checkout/optimistic"
+        },
+        {
+          "name": "UPDATE flashsale",
+          "service": "flashsale-engine",
+          "duration_ms": 43.05,
+          "start_offset_ms": 421.71,
+          "statement": "UPDATE inventory SET reserved_stock = reserved_stock + 1, version = version + 1 WHERE id = %(id)s AND version = %(v)s",
+          "system": "postgresql",
+          "http_status": null,
+          "span_id": "3664ead66315f3c6",
+          "under": "POST /checkout/optimistic"
+        },
+        {
+          "name": "connect",
+          "service": "flashsale-engine",
+          "duration_ms": 1.3,
+          "start_offset_ms": 478.27,
+          "statement": "",
+          "system": "postgresql",
+          "http_status": null,
+          "span_id": "face6bfb1b8bd19c",
+          "under": "POST /checkout/optimistic"
+        },
+        {
+          "name": "INSERT flashsale",
+          "service": "flashsale-engine",
+          "duration_ms": 12.56,
+          "start_offset_ms": 479.58,
+          "statement": "INSERT INTO user_behavior_logs (id, user_id, sale_id, order_id, page_load_time, checkout_time, ip_address, session_duration_ms) VALUES (gen_random_uuid(), %(uid)s, %(sid)s, %(oid)s, %(plt)s, %(ct)s, %(ip)s, %(dur)s)",
+          "system": "postgresql",
+          "http_status": null,
+          "span_id": "4a0ddc1a3bd2a6f9",
+          "under": "POST /checkout/optimistic"
+        },
+        {
+          "name": "connect",
+          "service": "flashsale-engine",
+          "duration_ms": 1.03,
+          "start_offset_ms": 1060.17,
+          "statement": "",
+          "system": "postgresql",
+          "http_status": null,
+          "span_id": "e9fe4d01d86fbbdb",
+          "under": "POST /checkout/optimistic"
+        },
+        {
+          "name": "SELECT flashsale",
+          "service": "flashsale-engine",
+          "duration_ms": 6.99,
+          "start_offset_ms": 1061.19,
+          "statement": "SELECT id, total_stock, reserved_stock, version FROM inventory WHERE sale_id = %(sid)s",
+          "system": "postgresql",
+          "http_status": null,
+          "span_id": "510041cab4af80ee",
+          "under": "POST /checkout/optimistic"
+        },
+        {
+          "name": "UPDATE flashsale",
+          "service": "flashsale-engine",
+          "duration_ms": 2.45,
+          "start_offset_ms": 1069.19,
+          "statement": "UPDATE inventory SET reserved_stock = reserved_stock + 1, version = version + 1 WHERE id = %(id)s AND version = %(v)s",
+          "system": "postgresql",
+          "http_status": null,
+          "span_id": "f9ee0b42a5edc2ad",
+          "under": "POST /checkout/optimistic"
+        },
+        {
+          "name": "INSERT flashsale",
+          "service": "flashsale-engine",
+          "duration_ms": 3.0,
+          "start_offset_ms": 1072.66,
+          "statement": "INSERT INTO orders (id, user_id, sale_id, status, created_at) VALUES (gen_random_uuid(), %(uid)s, %(sid)s, 'confirmed', now()) RETURNING id",
+          "system": "postgresql",
+          "http_status": null,
+          "span_id": "db16faaff63a46c2",
+          "under": "POST /checkout/optimistic"
+        },
+        {
+          "name": "connect",
+          "service": "flashsale-engine",
+          "duration_ms": 0.0,
+          "start_offset_ms": 1083.18,
+          "statement": "",
+          "system": "postgresql",
+          "http_status": null,
+          "span_id": "22aea80fd988a303",
+          "under": "POST /checkout/optimistic"
+        },
+        {
+          "name": "INSERT flashsale",
+          "service": "flashsale-engine",
+          "duration_ms": 7.35,
+          "start_offset_ms": 1083.18,
+          "statement": "INSERT INTO user_behavior_logs (id, user_id, sale_id, order_id, page_load_time, checkout_time, ip_address, session_duration_ms) VALUES (gen_random_uuid(), %(uid)s, %(sid)s, %(oid)s, %(plt)s, %(ct)s, %(ip)s, %(dur)s)",
+          "system": "postgresql",
+          "http_status": null,
+          "span_id": "a2a4c5ebdbb36d28",
+          "under": "POST /checkout/optimistic"
+        }
+      ],
+      "accounted_ms": 132.55,
+      "residual_ms": 212.97
+    },
+    "prometheus": {
+      "p50": 354.0,
+      "p95": 891.1,
+      "p99": 978.2
+    }
+  }
+}

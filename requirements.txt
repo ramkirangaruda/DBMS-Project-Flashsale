@@ -4,7 +4,19 @@ fastapi==0.141.1
 httpx==0.28.1
 numpy==2.5.1
 openpyxl==3.1.5
+opentelemetry-exporter-otlp-proto-http==1.44.0
+opentelemetry-instrumentation-fastapi==0.65b0
+opentelemetry-instrumentation-httpx==0.65b0
+opentelemetry-instrumentation-psycopg2==0.65b0
+opentelemetry-instrumentation-redis==0.65b0
+opentelemetry-instrumentation-sqlalchemy==0.65b0
+opentelemetry-sdk==1.44.0
 pandas==3.0.5
+# Screenshot utilities only (scripts/capture_dashboard.py, capture_traces.py).
+# Needs one extra step after pip: `python -m playwright install chromium`.
+playwright==1.62.0
+prometheus-fastapi-instrumentator==8.1.0
+prometheus_client==0.26.0
 psycopg2-binary==2.9.12
 pydantic==2.13.4
 python-docx==1.2.0

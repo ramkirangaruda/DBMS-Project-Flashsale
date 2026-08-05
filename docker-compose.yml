@@ -80,6 +80,34 @@ services:
       timeout: 5s
       retries: 30
 
+  # ---------------------------------------------------------------------
+  # Distributed tracing. Appended -- everything above is untouched.
+  #
+  # all-in-one bundles the collector, query service and UI in one container
+  # with in-memory storage. Traces are LOST ON RESTART, which is the right
+  # trade for a demo (no volume, no retention policy, no migration) but means
+  # a screenshot is the durable artefact, not the container.
+  #
+  # OTLP is the only ingest path used here; the app talks to :4318 over HTTP
+  # rather than gRPC, which keeps grpcio off the requirements list.
+  # ---------------------------------------------------------------------
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    ports:
+      - "16686:16686"   # web UI
+      - "4318:4318"     # OTLP/HTTP  <- app/tracing.py exports here
+      - "4317:4317"     # OTLP/gRPC  (unused, exposed for convenience)
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      # Bounds memory on a long chaos run: N=600 across three strategies
+      # produces tens of thousands of spans and the default is unlimited.
+      MEMORY_MAX_TRACES: "50000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:16686/"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
 volumes:
   pgdata:
   promdata:
