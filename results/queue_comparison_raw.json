@@ -1,0 +1,58 @@
+{
+  "label": "raw",
+  "collected_at": "2026-08-06 12:49:14",
+  "checkout": {
+    "pessimistic": {
+      "confirmed": 61.0,
+      "sold_out": 226.0,
+      "error": 0.0,
+      "occ_retries": 0.0,
+      "latency_p50_ms": 4284.5,
+      "latency_p95_ms": 9281.6,
+      "latency_p99_ms": 9856.3
+    },
+    "optimistic": {
+      "confirmed": 69.0,
+      "sold_out": 158.0,
+      "error": 69.0,
+      "occ_retries": 69.0,
+      "latency_p50_ms": 4116.7,
+      "latency_p95_ms": 9202.2,
+      "latency_p99_ms": 9840.4
+    },
+    "redis": {
+      "confirmed": 63.0,
+      "sold_out": 269.0,
+      "error": 0.0,
+      "occ_retries": 0.0,
+      "latency_p50_ms": 4668.4,
+      "latency_p95_ms": 9455.5,
+      "latency_p99_ms": 9891.1
+    }
+  },
+  "queue": {
+    "joins": 0.0,
+    "admits": 0.0,
+    "wait_p50_s": null,
+    "wait_p95_s": null,
+    "wait_p99_s": null,
+    "admission_rejected": 0.0
+  },
+  "peak_in_flight": {
+    "per_strategy": {
+      "pessimistic": 0.0,
+      "optimistic": 2.0,
+      "redis": 0.0
+    },
+    "total": 0.0
+  },
+  "lock_wait": {
+    "n": 273,
+    "traces_seen": 287,
+    "p50_ms": 20.19,
+    "p95_ms": 1218.88,
+    "p99_ms": 1831.05,
+    "max_ms": 2045.54,
+    "mean_ms": 141.15
+  }
+}

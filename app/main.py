@@ -24,6 +24,8 @@ from app.database import get_db, Base, engine, SessionLocal
 from app import models
 from app.idempotency import install as install_idempotency
 from app.metrics import install as install_metrics
+from app.queue import install as install_queue
+from app.admission import install as install_admission
 from app.tracing import install as install_tracing
 from app.ml.demand_forecast import get_forecast_sample
 
@@ -74,6 +76,18 @@ install_idempotency(app, r)
 # on the final response -- that header is how cache hits are counted without
 # reaching into app/idempotency.py. See app/metrics.py.
 install_metrics(app, r, SessionLocal)
+
+# Virtual waiting room: /queue/* endpoints plus the background admission
+# worker that releases buyers K at a time. Adds routes and a thread; changes
+# nothing about how checkout behaves once a buyer gets there.
+install_queue(app, r, SessionLocal)
+
+# The door in front of /checkout/*. Registered AFTER install_metrics, which
+# means it wraps OUTSIDE it -- so a buyer turned away is not counted as a
+# checkout attempt, and (more importantly) is rejected before the idempotency
+# middleware can cache a 403 under their key for 24 hours. See the stack note
+# in app/admission.py. The checkout handlers themselves are untouched.
+install_admission(app, r)
 
 # OpenTelemetry tracing, exported to Jaeger. Registered LAST so its middleware
 # is the outermost one: the server span then covers the whole exchange,

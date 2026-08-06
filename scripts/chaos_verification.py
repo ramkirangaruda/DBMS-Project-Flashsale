@@ -58,6 +58,15 @@ class Attempt:
     # True when the server served this from the idempotency cache rather than
     # re-executing checkout (the Idempotent-Replay response header).
     replayed: bool = False
+    # Monotonic start/end of the CHECKOUT request only -- excludes any time
+    # spent in the waiting room. These two are what make it possible to
+    # measure how many checkout requests were ever in flight at once, which
+    # is the whole claim the queue layer has to justify.
+    sent_at: float | None = None
+    done_at: float | None = None
+    # Seconds this buyer spent queued before being admitted (None if the run
+    # bypassed the queue).
+    queue_wait_s: float | None = None
 
 
 @dataclass
@@ -68,6 +77,7 @@ class StrategyRun:
     chaos_fraction: float
     starting_stock: int
     use_idempotency: bool = False
+    use_queue: bool = False
     attempts: list[Attempt] = field(default_factory=list)
     wall_time_s: float = 0.0
     confirmed_in_db: int = 0          # ground truth, counted server-side
@@ -160,6 +170,52 @@ class StrategyRun:
             if any(a.replayed for a in v)
         )
 
+    @property
+    def admission_refused(self):
+        """Requests the door turned away (HTTP 403). Should be 0 in both
+        arms: zero when the queue is off because there is no door, and zero
+        when it is on because every buyer queued first. Anything else means
+        the harness raced its own admission."""
+        return sum(1 for a in self.attempts if a.http_code == 403)
+
+    @property
+    def max_checkout_concurrency(self):
+        """
+        The most checkout requests ever in flight simultaneously, by sweep
+        line over each request's (sent_at, done_at).
+
+        Measured client-side and deliberately so: it is an independent check
+        on the server's `checkout_in_flight` gauge, which Prometheus only
+        samples every 2s and can therefore miss a peak between scrapes. This
+        sees every interval exactly.
+        """
+        events = []
+        for a in self.attempts:
+            if a.sent_at is not None and a.done_at is not None:
+                events.append((a.sent_at, 1))
+                events.append((a.done_at, -1))
+        if not events:
+            return None
+        # -1 before +1 at equal timestamps, so a request that ends exactly as
+        # another begins is not double-counted.
+        events.sort(key=lambda e: (e[0], e[1]))
+        cur = peak = 0
+        for _, delta in events:
+            cur += delta
+            peak = max(peak, cur)
+        return peak
+
+    @property
+    def queue_waits_s(self):
+        return [a.queue_wait_s for a in self.attempts if a.queue_wait_s is not None]
+
+    def queue_wait_percentile(self, p):
+        waits = sorted(self.queue_waits_s)
+        if not waits:
+            return None
+        k = max(0, min(len(waits) - 1, int(round((p / 100) * len(waits) + 0.5)) - 1))
+        return waits[k]
+
     def percentile(self, p):
         lat = sorted(a.latency_ms for a in self.attempts if a.latency_ms is not None)
         if not lat:
@@ -234,6 +290,70 @@ async def discover_sales(client):
     return r.json().get("sales", [])
 
 
+async def reset_queue(client, sale_id):
+    """Empty the waiting room and revoke outstanding admissions between runs.
+    Without this, tokens granted to the previous run are still live for their
+    30s TTL and could let a request through the door it should have waited
+    at."""
+    try:
+        r = await client.post(f"/queue/reset/{sale_id}")
+        return r.json() if r.status_code == 200 else None
+    except Exception:                                          # noqa: BLE001
+        return None
+
+
+async def queue_config(client):
+    try:
+        r = await client.get("/queue/config")
+        return r.json() if r.status_code == 200 else None
+    except Exception:                                          # noqa: BLE001
+        return None
+
+
+async def acquire_admission(client, sale_id, timeout_s=240.0):
+    """
+    Join the waiting room and poll until admitted. Returns
+    (admission_token, waited_seconds), or (None, waited) on timeout.
+
+    THE POLL INTERVAL IS DERIVED FROM THE SERVER'S OWN ESTIMATE, not fixed.
+    A thousand buyers polling every 100ms would put ~10k requests/second on
+    /queue/status and rebuild the exact stampede the queue exists to prevent
+    -- just aimed at a different endpoint. So a buyer 900 places back sleeps
+    seconds between checks and one near the front sleeps milliseconds, which
+    keeps total poll traffic roughly proportional to the queue's drain rate
+    instead of to its depth.
+    """
+    started = time.perf_counter()
+    try:
+        r = await client.post(f"/queue/join/{sale_id}")
+        if r.status_code != 200:
+            return None, time.perf_counter() - started
+        body = r.json()
+    except Exception:                                          # noqa: BLE001
+        return None, time.perf_counter() - started
+
+    token = body.get("queue_token")
+    est = body.get("estimated_wait_s") or 0.5
+    deadline = started + timeout_s
+
+    while time.perf_counter() < deadline:
+        await asyncio.sleep(min(max(est * 0.5, 0.2), 3.0))
+        try:
+            s = await client.get(f"/queue/status/{sale_id}", params={"token": token})
+            if s.status_code != 200:
+                continue
+            sb = s.json()
+        except Exception:                                      # noqa: BLE001
+            continue
+        if sb.get("admitted"):
+            return sb.get("admission_token"), time.perf_counter() - started
+        if sb.get("expired"):
+            return None, time.perf_counter() - started
+        est = sb.get("estimated_wait_s") or 0.5
+
+    return None, time.perf_counter() - started
+
+
 async def reset_sale(client, sale_id, stock, token=""):
     """Uses the existing admin endpoint -- resets PostgreSQL inventory AND the
     Redis counter together, which is what makes 'starting stock' exact for
@@ -281,14 +401,18 @@ class Chaos:
 
 async def one_purchase(client, strategy, sale_id, user_id, logical_id,
                        plan, barrier, results, is_duplicate=False,
-                       idem_key=None):
+                       idem_key=None, admission_token=None, queue_wait_s=None):
     """
-    A single buyer. Waits on the barrier so everyone fires together.
+    A single checkout request.
 
     `idem_key` is one UUID per LOGICAL purchase intent, reused verbatim by
     that intent's retry. That is the whole point: a retry is the same
     purchase being asked for again, not a second purchase. Passing None
     reproduces the original behaviour (two independent requests).
+
+    `admission_token` is the waiting-room grant, sent as X-Admission-Token.
+    Passing None reproduces the pre-queue behaviour, which the server only
+    accepts when ADMISSION_ENFORCED=false.
     """
     await barrier.wait()
 
@@ -297,7 +421,12 @@ async def one_purchase(client, strategy, sale_id, user_id, logical_id,
 
     started = time.perf_counter()
     params = {"sale_id": sale_id, "user_id": user_id}
-    headers = {"Idempotency-Key": idem_key} if idem_key else None
+    headers = {}
+    if idem_key:
+        headers["Idempotency-Key"] = idem_key
+    if admission_token:
+        headers["X-Admission-Token"] = admission_token
+    headers = headers or None
     try:
         if plan["abort"] and not is_duplicate:
             # Cancel mid-flight: the connection dies before the response is
@@ -310,12 +439,15 @@ async def one_purchase(client, strategy, sale_id, user_id, logical_id,
                 )
             except (asyncio.TimeoutError, httpx.HTTPError):
                 results.append(Attempt(logical_id, is_duplicate, "aborted", None,
-                                       detail="client aborted mid-flight"))
+                                       detail="client aborted mid-flight",
+                                       sent_at=started, done_at=time.perf_counter(),
+                                       queue_wait_s=queue_wait_s))
                 return
             # It answered before we could cut it -- fall through as normal.
 
         resp = await client.post(f"/checkout/{strategy}", params=params, headers=headers)
-        elapsed = (time.perf_counter() - started) * 1000
+        finished = time.perf_counter()
+        elapsed = (finished - started) * 1000
         try:
             body = resp.json()
         except Exception:                                      # noqa: BLE001
@@ -325,11 +457,59 @@ async def one_purchase(client, strategy, sale_id, user_id, logical_id,
             body.get("status", "failed"), elapsed, resp.status_code,
             body.get("order_id"), body.get("message", "")[:120],
             replayed=resp.headers.get("idempotent-replay", "").lower() == "true",
+            sent_at=started, done_at=finished, queue_wait_s=queue_wait_s,
         ))
     except Exception as exc:                                   # noqa: BLE001
-        elapsed = (time.perf_counter() - started) * 1000
-        results.append(Attempt(logical_id, is_duplicate, "error", elapsed,
-                               detail=f"{type(exc).__name__}: {exc}"[:120]))
+        finished = time.perf_counter()
+        results.append(Attempt(logical_id, is_duplicate, "error",
+                               (finished - started) * 1000,
+                               detail=f"{type(exc).__name__}: {exc}"[:120],
+                               sent_at=started, done_at=finished,
+                               queue_wait_s=queue_wait_s))
+
+
+async def one_buyer(client, strategy, sale_id, user_id, logical_id, plan,
+                    barrier, results, idem_key=None, use_queue=True,
+                    dup_plan=None):
+    """
+    One buyer's whole journey: wait for the drop, queue if the queue is on,
+    then send their checkout -- and their retry, if chaos gave them one.
+
+    THE RETRY REUSES THE SAME ADMISSION. A buyer who times out and resends is
+    still the same person in the same shopping window; making them rejoin the
+    back of a 1000-deep queue would be wrong behaviourally and would also
+    wreck the idempotency measurement, since the retry would then land ~50s
+    after its original rather than in the same contention window. One buyer,
+    one queue slot, up to two requests.
+    """
+    await barrier.wait()
+
+    if plan["delay"]:
+        # The chaos delay smears arrival at the FRONT DOOR -- the queue when
+        # queueing, checkout when not -- so it means the same thing in both
+        # arms: buyers do not all show up on the same millisecond.
+        await asyncio.sleep(plan["delay"])
+
+    token, waited = None, None
+    if use_queue:
+        token, waited = await acquire_admission(client, sale_id)
+        if token is None:
+            results.append(Attempt(logical_id, False, "error", None,
+                                   detail="never admitted from the queue",
+                                   queue_wait_s=waited))
+            return
+
+    # Already delayed above; don't charge it twice.
+    fire = dict(plan, delay=0.0)
+    tasks = [one_purchase(client, strategy, sale_id, user_id, logical_id, fire,
+                          barrier, results, idem_key=idem_key,
+                          admission_token=token, queue_wait_s=waited)]
+    if dup_plan is not None:
+        tasks.append(one_purchase(client, strategy, sale_id, user_id, logical_id,
+                                  dup_plan, barrier, results, is_duplicate=True,
+                                  idem_key=idem_key, admission_token=token,
+                                  queue_wait_s=waited))
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def make_idem_key(run_nonce, strategy, logical_id):
@@ -357,17 +537,22 @@ def make_idem_key(run_nonce, strategy, logical_id):
 
 async def run_strategy(base_url, strategy, sale_id, n, chaos_fraction,
                        stock, user_ids, admin_token, seed, use_idempotency=True,
-                       run_nonce=""):
+                       run_nonce="", use_queue=True):
     run = StrategyRun(strategy=strategy, sale_id=sale_id, n=n,
                       chaos_fraction=chaos_fraction, starting_stock=stock,
-                      use_idempotency=use_idempotency)
+                      use_idempotency=use_idempotency, use_queue=use_queue)
     rng = random.Random(seed)
     chaos = Chaos(chaos_fraction, rng)
 
+    # A queued run holds a connection per waiting buyer for the whole drain,
+    # and the timeout has to outlast the deepest queue: at 20 admissions/s,
+    # buyer 1000 waits ~50s before its checkout is even sent.
+    timeout = 240.0 if use_queue else 30.0
     limits = httpx.Limits(max_connections=n + 50, max_keepalive_connections=n + 50)
-    async with httpx.AsyncClient(base_url=base_url, timeout=30.0, limits=limits) as client:
+    async with httpx.AsyncClient(base_url=base_url, timeout=timeout, limits=limits) as client:
         try:
             await reset_sale(client, sale_id, stock, admin_token)
+            await reset_queue(client, sale_id)
         except Exception as exc:                               # noqa: BLE001
             run.error = f"could not reset sale: {exc}"
             return run
@@ -385,18 +570,16 @@ async def run_strategy(base_url, strategy, sale_id, n, chaos_fraction,
             uid = user_ids[i % len(user_ids)]
             # One key per logical purchase INTENT -- see make_idem_key().
             idem_key = make_idem_key(run_nonce, strategy, i) if use_idempotency else None
-            tasks.append(one_purchase(client, strategy, sale_id, uid, i, plan,
-                                      barrier, results, idem_key=idem_key))
-            if plan["duplicate"]:
-                # The SAME logical buyer retrying -- same key, so with
-                # idempotency on this is one purchase asked for twice, and
-                # with it off it is two independent purchases (the old
-                # behaviour, kept for the before/after comparison).
-                tasks.append(one_purchase(client, strategy, sale_id, uid, i,
-                                          {"delay": rng.uniform(0.0, 0.05),
-                                           "abort": False, "duplicate": False},
-                                          barrier, results, is_duplicate=True,
-                                          idem_key=idem_key))
+            # The SAME logical buyer retrying -- same key, so with
+            # idempotency on this is one purchase asked for twice, and with
+            # it off it is two independent purchases (the old behaviour,
+            # kept for the before/after comparison).
+            dup_plan = ({"delay": rng.uniform(0.0, 0.05),
+                         "abort": False, "duplicate": False}
+                        if plan["duplicate"] else None)
+            tasks.append(one_buyer(client, strategy, sale_id, uid, i, plan,
+                                   barrier, results, idem_key=idem_key,
+                                   use_queue=use_queue, dup_plan=dup_plan))
 
         gathered = asyncio.gather(*tasks)
         t0 = time.perf_counter()
@@ -446,7 +629,17 @@ def build_report(runs, args, sale_names):
     L.append(f"- Chaos fraction: **{args.chaos:.0%}** of requests")
     L.append(f"- Starting stock: **{args.stock}** units per sale")
     L.append(f"- Strategies: {', '.join(r.strategy for r in runs)}")
-    L.append(f"- RNG seed: {args.seed} (re-run with the same seed to reproduce)\n")
+    L.append(f"- RNG seed: {args.seed} (re-run with the same seed to reproduce)")
+    if getattr(args, "queue", True):
+        cfg = getattr(args, "_queue_config", None) or {}
+        rate = cfg.get("admission_rate_per_s", "?")
+        L.append(f"- Front door: **waiting room ON** — buyers join "
+                 f"`/queue/join/{{sale_id}}` and are admitted "
+                 f"{cfg.get('admit_batch', '?')} every "
+                 f"{cfg.get('admit_interval_s', '?')}s (**{rate}/s**)\n")
+    else:
+        L.append("- Front door: **waiting room BYPASSED** (`--no-queue`) — the raw "
+                 "pre-queue herd, requires `ADMISSION_ENFORCED=false`\n")
 
     L.append("## The invariant\n")
     L.append("> **Confirmed orders created during a run must never exceed the "
@@ -563,6 +756,36 @@ def build_report(runs, args, sale_names):
             "(the `Idempotent-Replay: true` header). It is the direct evidence that "
             "the mechanism engaged, as opposed to inferring it from an absence.\n"
         )
+
+    # ---- waiting room ----
+    L.append("## Waiting room\n")
+    L.append("| Strategy | Queue | Buyers | **Max concurrent checkouts** | "
+             "Queue wait p50 / p95 / max | Refused at door (403) |")
+    L.append("|---|---|---|---|---|---|")
+    for r in runs:
+        if r.error:
+            continue
+        waits = r.queue_waits_s
+        wtxt = "--" if not waits else (
+            f"{r.queue_wait_percentile(50):.1f}s / "
+            f"{r.queue_wait_percentile(95):.1f}s / {max(waits):.1f}s")
+        L.append(f"| `{r.strategy}` | {'on' if r.use_queue else '**off**'} | {r.n} | "
+                 f"**{r.max_checkout_concurrency}** | {wtxt} | {r.admission_refused} |")
+    L.append("")
+    L.append(
+        "**Max concurrent checkouts** is the peak number of checkout requests in "
+        "flight at the same instant, computed by sweep line over every request's "
+        "start and end time. It is the number the waiting room exists to bound: "
+        "with the queue off it should approach the buyer count, and with the queue "
+        "on it should stay near the admission batch size no matter how many people "
+        "showed up.\n"
+    )
+    L.append(
+        "It is measured client-side on purpose. The server also publishes "
+        "`checkout_in_flight`, but Prometheus samples that every 2 seconds and can "
+        "step over a peak between scrapes; this sees every interval. Two "
+        "independent measurements of the same quantity is the point.\n"
+    )
 
     verdict = "❌ **AT LEAST ONE INVARIANT VIOLATION**" if any_violation \
         else "✅ **All invariants held.**"
@@ -703,7 +926,22 @@ async def main_async(args):
         return 1
 
     print(f"Chaos verification — N={args.n}, chaos={args.chaos:.0%}, stock={args.stock}")
-    print(f"API: {args.base_url}   users available: {len(user_ids)}\n")
+    print(f"API: {args.base_url}   users available: {len(user_ids)}")
+
+    args._queue_config = None
+    if args.queue:
+        async with httpx.AsyncClient(base_url=args.base_url, timeout=10.0) as c:
+            args._queue_config = await queue_config(c)
+        cfg = args._queue_config or {}
+        print(f"Waiting room: ON — admitting {cfg.get('admit_batch','?')} every "
+              f"{cfg.get('admit_interval_s','?')}s "
+              f"({cfg.get('admission_rate_per_s','?')}/s), "
+              f"token TTL {cfg.get('admission_ttl_s','?')}s")
+        print(f"  ~{args.n / max(1e-9, cfg.get('admission_rate_per_s') or 1):.0f}s "
+              f"to drain {args.n} buyers per run")
+    else:
+        print("Waiting room: BYPASSED (--no-queue) — raw herd straight at /checkout/*")
+    print()
 
     # --compare runs each strategy twice at the SAME seed: identical chaos
     # plan, identical keys, the only difference being whether the retry
@@ -726,17 +964,24 @@ async def main_async(args):
                                      args.chaos, args.stock, user_ids,
                                      args.admin_token, args.seed,
                                      use_idempotency=use_idem,
-                                     run_nonce=run_nonce)
+                                     run_nonce=run_nonce,
+                                     use_queue=args.queue)
             runs.append(run)
             if run.error:
                 print(f"  ERROR: {run.error}\n")
                 continue
             flag = "HOLDS" if run.invariant_holds else "VIOLATED"
+            qbits = ""
+            if run.use_queue:
+                qbits = (f"queue_wait_p50={fmt(run.queue_wait_percentile(50), 's')} "
+                         f"p95={fmt(run.queue_wait_percentile(95), 's')}  ")
             print(f"  confirmed(DB)={run.confirmed_in_db}/{run.starting_stock}  "
                   f"sold_out={run.sold_out}  aborted={run.aborted}  "
                   f"dup_pairs={len(run.duplicate_pairs)}  "
                   f"bought_twice={run.duplicates_distinct_orders}  "
-                  f"replayed={run.replayed}  "
+                  f"replayed={run.replayed}  refused_403={run.admission_refused}  "
+                  f"max_concurrent_checkouts={run.max_checkout_concurrency}  "
+                  f"{qbits}"
                   f"wall={run.wall_time_s:.2f}s  INVARIANT {flag}\n", flush=True)
 
     out_path = os.path.abspath(args.out)
@@ -775,7 +1020,12 @@ def main():
     p.add_argument("--compare", action="store_true",
                    help="run each strategy twice at the same seed -- once without "
                         "and once with Idempotency-Key -- for a controlled before/after")
-    p.set_defaults(idempotency=True)
+    p.add_argument("--no-queue", dest="queue", action="store_false",
+                   help="skip the waiting room and hit /checkout/* directly "
+                        "(the pre-queue herd). Requires the server to be running "
+                        "with ADMISSION_ENFORCED=false, otherwise every request "
+                        "is refused at the door with a 403")
+    p.set_defaults(idempotency=True, queue=True)
     args = p.parse_args()
 
     if not 0.0 <= args.chaos <= 1.0:

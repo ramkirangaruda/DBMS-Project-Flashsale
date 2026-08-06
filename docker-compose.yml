@@ -108,6 +108,91 @@ services:
       timeout: 5s
       retries: 20
 
+  # ---------------------------------------------------------------------
+  # Horizontally scaled API tier. Appended -- postgres and redis above are
+  # untouched, and DELIBERATELY still single instances. This phase scales
+  # the stateless layer only; the whole question being tested is what
+  # happens to a contended row lock when you put three times as many
+  # processes in front of one database.
+  #
+  # Three explicit services rather than `deploy: replicas: 3` because
+  # Compose (non-Swarm) will not publish distinct ports for replicas, and
+  # Prometheus has to scrape each instance separately -- scraping counters
+  # through a load balancer would hand you a different process each time
+  # and produce nonsense.
+  #
+  # NOTE ON ADMISSION: app/queue.py runs its admission worker per process,
+  # so three replicas run three of them and the effective admission rate is
+  # 3 x QUEUE_ADMIT_BATCH per interval. That is left as-is on purpose --
+  # it is the honest out-of-the-box behaviour of scaling this design, and
+  # results/horizontal_scaling_notes.md reports it as a finding rather than
+  # quietly working around it.
+  # ---------------------------------------------------------------------
+  api1: &api
+    build: .
+    image: flashsale-api:latest
+    # Each replica also published directly, on 8011/8012/8013. Traffic for
+    # the experiments goes through nginx on 8080; these exist so /metrics can
+    # be read per process. Counters are per-process, so scraping them through
+    # the load balancer would sample a random replica each time.
+    ports:
+      - "8011:8010"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment: &api_env
+      # Inside the compose network these are the container ports, not the
+      # remapped published ones the host process uses.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_SERVICE_NAME: flashsale-engine
+      HOST: 0.0.0.0
+      PORT: 8010
+      # Swept by the experiments; see results/horizontal_scaling_notes.md.
+      QUEUE_ADMIT_BATCH: ${QUEUE_ADMIT_BATCH:-10}
+      ADMISSION_ENFORCED: ${ADMISSION_ENFORCED:-true}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8010/api')\""]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  api2:
+    <<: *api
+    ports:
+      - "8012:8010"
+    environment:
+      <<: *api_env
+
+  api3:
+    <<: *api
+    ports:
+      - "8013:8010"
+    environment:
+      <<: *api_env
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:80"
+    depends_on:
+      - api1
+      - api2
+      - api3
+    volumes:
+      - ./monitoring/nginx.conf:/etc/nginx/nginx.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/api || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
 volumes:
   pgdata:
   promdata:

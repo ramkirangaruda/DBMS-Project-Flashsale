@@ -1,0 +1,11 @@
+venv/
+.git/
+results/
+docs/
+data/
+monitoring/
+scripts/
+frontend/node_modules/
+frontend/src/
+**/__pycache__/
+*.pyc

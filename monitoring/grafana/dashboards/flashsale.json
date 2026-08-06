@@ -285,6 +285,281 @@
           "legendFormat": "{{product}}"
         }
       ]
+    },
+    {
+      "id": 100,
+      "type": "row",
+      "title": "Waiting room (admission control)",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      }
+    },
+    {
+      "id": 101,
+      "type": "timeseries",
+      "title": "Queue depth — buyers still waiting",
+      "description": "Length of the Redis sorted set per sale. A flash drop shows as a near-vertical rise as everyone joins at once, then a straight-line decay at the admission rate. The slope IS the rate: batch size divided by interval.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "flashsale-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "flashsale-prom"
+          },
+          "expr": "current_queue_depth",
+          "legendFormat": "{{sale_id}}"
+        }
+      ]
+    },
+    {
+      "id": 102,
+      "type": "timeseries",
+      "title": "Joins vs admits",
+      "description": "Arrival rate against release rate. Joins spike with the herd; admits stay flat at the configured ceiling regardless. The gap between the two curves is load the checkout endpoints never had to absorb.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "flashsale-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "flashsale-prom"
+          },
+          "expr": "sum(rate(queue_joins_total[30s]))",
+          "legendFormat": "joins/s"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "flashsale-prom"
+          },
+          "expr": "sum(rate(queue_admits_total[30s]))",
+          "legendFormat": "admits/s"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "flashsale-prom"
+          },
+          "expr": "sum(rate(admission_rejected_total[30s]))",
+          "legendFormat": "refused at door/s"
+        }
+      ]
+    },
+    {
+      "id": 103,
+      "type": "timeseries",
+      "title": "Time spent in the waiting room",
+      "description": "How long admitted buyers waited. Rises through a drain, because the buyer admitted last queued as long as everyone ahead of them. This is the cost side of the trade -- the queue converts contention into waiting, and the waiting should be shown rather than hidden.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "flashsale-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 26
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "flashsale-prom"
+          },
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(queue_wait_seconds_bucket[1m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "flashsale-prom"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(queue_wait_seconds_bucket[1m])))",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "flashsale-prom"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(queue_wait_seconds_bucket[1m])))",
+          "legendFormat": "p99"
+        }
+      ]
+    },
+    {
+      "id": 104,
+      "type": "timeseries",
+      "title": "Checkout requests in flight — the payoff",
+      "description": "Concurrent executions inside /checkout/*. This is the entire justification for the queue: a thousand buyers can arrive at once and this line should still sit near the admission batch size. Compare with a --no-queue run, where it tracks the herd instead. NOTE: sampled every 2s, so a sub-scrape spike can be missed; scripts/chaos_verification.py measures the same quantity exactly, client-side.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "flashsale-prom"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 18,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stepAfter": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "flashsale-prom"
+          },
+          "expr": "checkout_in_flight",
+          "legendFormat": "{{strategy}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "flashsale-prom"
+          },
+          "expr": "sum(checkout_in_flight)",
+          "legendFormat": "total"
+        }
+      ]
     }
   ]
 }

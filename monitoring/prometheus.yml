@@ -10,6 +10,16 @@ global:
     project: flashsale-engine
 
 scrape_configs:
+  # Horizontally scaled API tier. Each replica is scraped SEPARATELY and on
+  # purpose: these are per-process counters, so pulling them through the
+  # nginx load balancer would land on an arbitrary replica each interval and
+  # produce a series that jumps between three unrelated counter values.
+  # Scrape each, then sum in the query.
+  - job_name: flashsale-api-replicas
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api1:8010", "api2:8010", "api3:8010"]
+
   - job_name: flashsale-api
     metrics_path: /metrics
     static_configs:

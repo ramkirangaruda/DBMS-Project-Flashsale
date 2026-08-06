@@ -93,6 +93,58 @@ SALE_DIVERGENCE = Gauge(
     ["sale_id", "product"],
 )
 
+# --------------------------------------------------------------------------
+# Waiting-room metrics.
+#
+# DEFINITIONS ONLY -- nothing in this file records them. app/queue.py sets the
+# queue gauges from its admission worker and app/admission.py moves the
+# in-flight gauge, so the observation code lives next to the thing being
+# observed and the middleware above is untouched.
+# --------------------------------------------------------------------------
+QUEUE_JOINS = Counter(
+    "queue_joins_total",
+    "Buyers who took a place in the waiting room.",
+    ["sale_id"],
+)
+
+QUEUE_ADMITS = Counter(
+    "queue_admits_total",
+    "Buyers released from the waiting room to checkout. Rises in steps of "
+    "the admission batch size, which is the point.",
+    ["sale_id"],
+)
+
+QUEUE_WAIT = Histogram(
+    "queue_wait_seconds",
+    "How long an admitted buyer spent in the waiting room.",
+    # A 1000-deep queue at 20 admissions/s takes ~50s to drain, so the useful
+    # range runs from sub-second to about a minute.
+    buckets=(0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 45.0, 60.0, 120.0,
+             float("inf")),
+)
+
+QUEUE_DEPTH = Gauge(
+    "current_queue_depth",
+    "Buyers still waiting for a sale right now.",
+    ["sale_id"],
+)
+
+CHECKOUT_IN_FLIGHT = Gauge(
+    "checkout_in_flight",
+    "Checkout requests executing at this instant. This is the number the "
+    "waiting room is designed to bound: without it 'the herd never reaches "
+    "checkout' would be an assertion rather than a measurement.",
+    ["strategy"],
+)
+
+ADMISSION_REJECTED = Counter(
+    "admission_rejected_total",
+    "Checkout attempts turned away at the door for lack of a valid admission "
+    "token. Counted separately from checkout_requests_total on purpose -- a "
+    "request that never reached a handler is not a checkout attempt.",
+    ["reason"],
+)
+
 
 # --------------------------------------------------------------------------
 # Checkout observation middleware
