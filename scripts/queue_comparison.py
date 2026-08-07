@@ -241,15 +241,29 @@ def lock_waits(lookback_s=600, limit=1500):
     except Exception as exc:                                   # noqa: BLE001
         return {"error": f"{type(exc).__name__}: {exc}", "n": 0}
 
-    waits = []
+    # Sanity ceiling. Jaeger stores span duration as an unsigned int, so a
+    # span whose end timestamp lands before its start -- clock skew between
+    # a container and the host, or a span that never closed cleanly --
+    # arrives as ~2^64 microseconds instead of a negative number. One such
+    # span appeared in the scaled raw arm and turned max into 1.8e16 ms and
+    # the mean into 3.7e13 ms. Percentiles survived it (they are order
+    # statistics), but a mean quietly poisoned by one bad row is exactly the
+    # kind of number that ends up in a report unchallenged.
+    MAX_PLAUSIBLE_MS = 3_600_000.0                             # one hour
+
+    waits, discarded = [], 0
     for trace in data:
         for span in trace.get("spans", []):
             stmt = (_tags(span).get("db.statement") or "")
             if "FOR UPDATE" in stmt:
-                waits.append(span["duration"] / 1000.0)        # ms
+                ms = span["duration"] / 1000.0
+                if 0 <= ms <= MAX_PLAUSIBLE_MS:
+                    waits.append(ms)
+                else:
+                    discarded += 1
 
     if not waits:
-        return {"n": 0, "traces_seen": len(data)}
+        return {"n": 0, "traces_seen": len(data), "discarded_implausible": discarded}
 
     waits.sort()
 
@@ -260,6 +274,7 @@ def lock_waits(lookback_s=600, limit=1500):
     return {
         "n": len(waits),
         "traces_seen": len(data),
+        "discarded_implausible": discarded,
         "p50_ms": pct(50), "p95_ms": pct(95), "p99_ms": pct(99),
         "max_ms": round(waits[-1], 2),
         "mean_ms": round(sum(waits) / len(waits), 2),

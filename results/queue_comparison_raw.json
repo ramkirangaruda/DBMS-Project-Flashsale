@@ -1,33 +1,33 @@
 {
   "label": "raw",
-  "collected_at": "2026-08-06 12:49:14",
+  "collected_at": "2026-08-07 21:23:18",
   "checkout": {
     "pessimistic": {
       "confirmed": 61.0,
-      "sold_out": 226.0,
+      "sold_out": 940.0,
       "error": 0.0,
       "occ_retries": 0.0,
-      "latency_p50_ms": 4284.5,
-      "latency_p95_ms": 9281.6,
-      "latency_p99_ms": 9856.3
+      "latency_p50_ms": 3566.5,
+      "latency_p95_ms": 4910.4,
+      "latency_p99_ms": 7497.5
     },
     "optimistic": {
-      "confirmed": 69.0,
-      "sold_out": 158.0,
-      "error": 69.0,
-      "occ_retries": 69.0,
-      "latency_p50_ms": 4116.7,
-      "latency_p95_ms": 9202.2,
-      "latency_p99_ms": 9840.4
+      "confirmed": 47.0,
+      "sold_out": 0.0,
+      "error": 953.0,
+      "occ_retries": 953.0,
+      "latency_p50_ms": 3123.1,
+      "latency_p95_ms": 4812.3,
+      "latency_p99_ms": 4962.5
     },
     "redis": {
-      "confirmed": 63.0,
-      "sold_out": 269.0,
+      "confirmed": 60.0,
+      "sold_out": 940.0,
       "error": 0.0,
       "occ_retries": 0.0,
-      "latency_p50_ms": 4668.4,
-      "latency_p95_ms": 9455.5,
-      "latency_p99_ms": 9891.1
+      "latency_p50_ms": 3492.2,
+      "latency_p95_ms": 4849.2,
+      "latency_p99_ms": 4969.8
     }
   },
   "queue": {
@@ -40,19 +40,42 @@
   },
   "peak_in_flight": {
     "per_strategy": {
-      "pessimistic": 0.0,
-      "optimistic": 2.0,
-      "redis": 0.0
+      "pessimistic": 242.0,
+      "optimistic": 325.0,
+      "redis": 21.0
     },
-    "total": 0.0
+    "total": 325.0,
+    "per_instance": {
+      "api3:8010": 325.0,
+      "api2:8010": 247.0,
+      "api1:8010": 46.0
+    }
+  },
+  "scrape_health": {
+    "scrape_success_ratio": {
+      "api3:8010": 0.9259,
+      "api2:8010": 0.9259,
+      "api1:8010": 0.9206
+    },
+    "failed_scrape_samples": {
+      "api3:8010": 14.0,
+      "api2:8010": 14.0,
+      "api1:8010": 14.0
+    }
   },
   "lock_wait": {
-    "n": 273,
-    "traces_seen": 287,
-    "p50_ms": 20.19,
-    "p95_ms": 1218.88,
-    "p99_ms": 1831.05,
-    "max_ms": 2045.54,
-    "mean_ms": 141.15
-  }
+    "n": 999,
+    "traces_seen": 1001,
+    "discarded_implausible": 2,
+    "p50_ms": 388.98,
+    "p95_ms": 529.23,
+    "p99_ms": 1025.15,
+    "max_ms": 1747.82,
+    "mean_ms": 372.66
+  },
+  "instances": [
+    "http://127.0.0.1:8011",
+    "http://127.0.0.1:8012",
+    "http://127.0.0.1:8013"
+  ]
 }

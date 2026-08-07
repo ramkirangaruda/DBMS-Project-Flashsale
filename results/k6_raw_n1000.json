@@ -1,0 +1,137 @@
+{
+  "arm": "raw",
+  "n": 1000,
+  "stock": 60,
+  "collected_at": "2026-08-07 21:19:29",
+  "strategies": {
+    "pessimistic": {
+      "sale_id": "5a1e0000-0000-4000-8000-000000000005",
+      "wall_s": 46.53,
+      "confirmed_db": 60,
+      "starting_stock": 60,
+      "invariant_holds": true,
+      "peak_concurrent_checkouts": 997,
+      "confirmed": 60,
+      "sold_out": 940,
+      "version_conflict": 0,
+      "refused_403": 0,
+      "other_failure": 0,
+      "never_admitted": 0,
+      "join_failed": 0,
+      "checkout_p50_ms": 4820.802046,
+      "checkout_p95_ms": 6150.6268390000005,
+      "checkout_p99_ms": 6319.68512172,
+      "checkout_max_ms": 6760.597222,
+      "queue_wait_p50_ms": null,
+      "queue_wait_p95_ms": null,
+      "resources": {
+        "samples": 8,
+        "cpu_peak_pct": {
+          "api1": 163.8,
+          "api2": 101.1,
+          "api3": 105.8,
+          "nginx": 144.1
+        },
+        "cpu_mean_pct": {
+          "api1": 41.9,
+          "api2": 31.4,
+          "api3": 33.0,
+          "nginx": 20.9
+        },
+        "pg_peak": {
+          "conns": 44,
+          "active": 16,
+          "waiting_on_lock": 15,
+          "idle_in_txn": 1
+        },
+        "pg_mean_conns": 33.5
+      }
+    },
+    "optimistic": {
+      "sale_id": "5a1e0000-0000-4000-8000-000000000004",
+      "wall_s": 36.26,
+      "confirmed_db": 47,
+      "starting_stock": 60,
+      "invariant_holds": true,
+      "peak_concurrent_checkouts": 997,
+      "confirmed": 47,
+      "sold_out": 0,
+      "version_conflict": 953,
+      "refused_403": 0,
+      "other_failure": 0,
+      "never_admitted": 0,
+      "join_failed": 0,
+      "checkout_p50_ms": 2962.8443095000002,
+      "checkout_p95_ms": 4563.6572532499995,
+      "checkout_p99_ms": 4718.28977201,
+      "checkout_max_ms": 4799.627602,
+      "queue_wait_p50_ms": null,
+      "queue_wait_p95_ms": null,
+      "resources": {
+        "samples": 7,
+        "cpu_peak_pct": {
+          "api1": 88.5,
+          "api2": 87.6,
+          "api3": 90.4,
+          "nginx": 27.9
+        },
+        "cpu_mean_pct": {
+          "api1": 26.1,
+          "api2": 21.2,
+          "api3": 29.3,
+          "nginx": 5.0
+        },
+        "pg_peak": {
+          "conns": 32,
+          "active": 1,
+          "waiting_on_lock": 0,
+          "idle_in_txn": 0
+        },
+        "pg_mean_conns": 32.0
+      }
+    },
+    "redis": {
+      "sale_id": "5a1e0000-0000-4000-8000-000000000003",
+      "wall_s": 14.62,
+      "confirmed_db": 60,
+      "starting_stock": 60,
+      "invariant_holds": true,
+      "peak_concurrent_checkouts": 1000,
+      "confirmed": 60,
+      "sold_out": 940,
+      "version_conflict": 0,
+      "refused_403": 0,
+      "other_failure": 0,
+      "never_admitted": 0,
+      "join_failed": 0,
+      "checkout_p50_ms": 4349.9861495000005,
+      "checkout_p95_ms": 5106.16467655,
+      "checkout_p99_ms": 5150.62747945,
+      "checkout_max_ms": 5163.782414,
+      "queue_wait_p50_ms": null,
+      "queue_wait_p95_ms": null,
+      "resources": {
+        "samples": 3,
+        "cpu_peak_pct": {
+          "api1": 94.9,
+          "api2": 98.3,
+          "api3": 45.9,
+          "nginx": 4.0
+        },
+        "cpu_mean_pct": {
+          "api1": 41.2,
+          "api2": 34.3,
+          "api3": 27.8,
+          "nginx": 2.3
+        },
+        "pg_peak": {
+          "conns": 32,
+          "active": 2,
+          "waiting_on_lock": 0,
+          "idle_in_txn": 3
+        },
+        "pg_mean_conns": 32.0
+      }
+    }
+  }
+}

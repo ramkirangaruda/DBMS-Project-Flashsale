@@ -1,15 +1,15 @@
 {
   "label": "queued",
-  "collected_at": "2026-08-07 21:30:08",
+  "collected_at": "2026-08-07 21:28:27",
   "checkout": {
     "pessimistic": {
-      "confirmed": 120.0,
-      "sold_out": 956.0,
+      "confirmed": 60.0,
+      "sold_out": 196.0,
       "error": 0.0,
       "occ_retries": 0.0,
-      "latency_p50_ms": 65.4,
-      "latency_p95_ms": 476.7,
-      "latency_p99_ms": 913.3
+      "latency_p50_ms": 72.9,
+      "latency_p95_ms": 241.1,
+      "latency_p99_ms": 436.0
     },
     "optimistic": {
       "confirmed": 0.0,
@@ -31,51 +31,43 @@
     }
   },
   "queue": {
-    "joins": 1082.0,
-    "admits": 1082.0,
-    "wait_p50_s": 6.046511627906977,
-    "wait_p95_s": 17.308457711442777,
-    "wait_p99_s": 19.461691542288563,
+    "joins": 256.0,
+    "admits": 256.0,
+    "wait_p50_s": 11.741935483870968,
+    "wait_p95_s": 19.174193548387095,
+    "wait_p99_s": 19.83483870967742,
     "admission_rejected": 0.0
   },
   "peak_in_flight": {
     "per_strategy": {
-      "pessimistic": 54.0,
-      "optimistic": 0.0,
-      "redis": 0.0
+      "pessimistic": 9.0,
+      "optimistic": 25.0,
+      "redis": 33.0
     },
-    "total": 54.0,
+    "total": 33.0,
     "per_instance": {
-      "api3:8010": 9.0,
-      "api2:8010": 25.0,
-      "api1:8010": 20.0
+      "api1:8010": 33.0
     }
   },
   "scrape_health": {
     "scrape_success_ratio": {
-      "api3:8010": 0.5635,
-      "api2:8010": 0.56,
       "api1:8010": 0.9444
     },
     "failed_scrape_samples": {
-      "api1:8010": 7.0,
-      "api3:8010": 53.0,
-      "api2:8010": 53.0
+      "api1:8010": 7.0
     }
   },
   "lock_wait": {
-    "n": 1076,
-    "traces_seen": 819,
+    "n": 256,
+    "traces_seen": 256,
     "discarded_implausible": 0,
-    "p50_ms": 4.07,
-    "p95_ms": 208.18,
-    "p99_ms": 512.51,
-    "max_ms": 664.52,
-    "mean_ms": 38.61
+    "p50_ms": 8.37,
+    "p95_ms": 41.79,
+    "p99_ms": 65.3,
+    "max_ms": 85.19,
+    "mean_ms": 13.17
   },
   "instances": [
-    "http://127.0.0.1:8011",
-    "http://127.0.0.1:8012",
-    "http://127.0.0.1:8013"
+    "http://127.0.0.1:8011"
   ]
 }

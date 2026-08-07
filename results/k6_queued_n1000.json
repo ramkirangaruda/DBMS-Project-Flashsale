@@ -1,0 +1,51 @@
+{
+  "arm": "queued",
+  "n": 1000,
+  "stock": 60,
+  "collected_at": "2026-08-07 21:29:26",
+  "strategies": {
+    "pessimistic": {
+      "sale_id": "5a1e0000-0000-4000-8000-000000000005",
+      "wall_s": 35.28,
+      "confirmed_db": 60,
+      "starting_stock": 60,
+      "invariant_holds": true,
+      "peak_concurrent_checkouts": 92,
+      "confirmed": 60,
+      "sold_out": 760,
+      "version_conflict": 0,
+      "refused_403": 0,
+      "other_failure": 0,
+      "never_admitted": 6,
+      "join_failed": 174,
+      "checkout_p50_ms": 69.7262605,
+      "checkout_p95_ms": 609.0307902999994,
+      "checkout_p99_ms": 1038.2274808899992,
+      "checkout_max_ms": 1108.593938,
+      "queue_wait_p50_ms": 3236.5,
+      "queue_wait_p95_ms": 8900.75,
+      "resources": {
+        "samples": 8,
+        "cpu_peak_pct": {
+          "api1": 96.3,
+          "api2": 151.4,
+          "api3": 141.8,
+          "nginx": 19.2
+        },
+        "cpu_mean_pct": {
+          "api1": 30.9,
+          "api2": 40.8,
+          "api3": 41.7,
+          "nginx": 4.6
+        },
+        "pg_peak": {
+          "conns": 32,
+          "active": 1,
+          "waiting_on_lock": 0,
+          "idle_in_txn": 0
+        },
+        "pg_mean_conns": 30.0
+      }
+    }
+  }
+}
