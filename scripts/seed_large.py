@@ -128,6 +128,14 @@ def cleanup(conn):
             SELECT id FROM orders WHERE user_id IN ({owned_users})
         )
     """), params)
+    # payments (app/models.py) is a newer FK-child of orders -- without
+    # deleting it first, any order that ever had a /payment/create call
+    # against it blocks the DELETE FROM orders below.
+    conn.execute(text(f"""
+        DELETE FROM payments WHERE order_id IN (
+            SELECT id FROM orders WHERE user_id IN ({owned_users})
+        )
+    """), params)
     conn.execute(text(f"DELETE FROM user_behavior_logs WHERE user_id IN ({owned_users})"), params)
     conn.execute(text(f"DELETE FROM orders WHERE user_id IN ({owned_users})"), params)
     conn.execute(text("DELETE FROM users WHERE email LIKE :pat"), params)

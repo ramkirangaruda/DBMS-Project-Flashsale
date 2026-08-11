@@ -73,8 +73,28 @@ def cleanup(db):
             SELECT id FROM orders WHERE sale_id IN ({owned_sales})
         )
     """), p)
+    # payments (app/models.py) is a newer FK-child of orders -- without
+    # deleting it first, any order that ever had a /payment/create call
+    # against it (every order this script's own storefront sales produced
+    # during payment-phase testing, for instance) blocks the DELETE FROM
+    # orders below with a foreign-key violation.
+    db.execute(text(f"""
+        DELETE FROM payments WHERE order_id IN (
+            SELECT id FROM orders WHERE sale_id IN ({owned_sales})
+        )
+    """), p)
     db.execute(text(f"DELETE FROM user_behavior_logs WHERE sale_id IN ({owned_sales})"), p)
     db.execute(text(f"DELETE FROM orders WHERE sale_id IN ({owned_sales})"), p)
+    # stock_audit_log (Section 7 recovery demo) references inventory.id and
+    # is now ALSO written by app/payments.py's decline-reconciliation path.
+    # Found by re-running this script against a database carrying real
+    # reconciliation rows from testing, not by inspection -- see the
+    # identical note in scripts/seed.py.
+    db.execute(text(f"""
+        DELETE FROM stock_audit_log WHERE inventory_id IN (
+            SELECT id FROM inventory WHERE sale_id IN ({owned_sales})
+        )
+    """), p)
     db.execute(text(f"DELETE FROM inventory WHERE sale_id IN ({owned_sales})"), p)
     db.execute(text(f"DELETE FROM flash_sale_events WHERE id IN ({owned_sales})"), p)
     db.execute(text("DELETE FROM products WHERE id::text LIKE :pat"), p)

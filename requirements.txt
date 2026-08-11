@@ -24,4 +24,7 @@ python-multipart==0.0.32
 redis==8.1.0
 scikit-learn==1.9.0
 SQLAlchemy==2.0.51
+# Test-mode payments only (app/payments.py). Needs STRIPE_SECRET_KEY set --
+# see that module's STRIPE_KEY_HELP for how to get a free test key.
+stripe==15.4.0
 uvicorn==0.52.0

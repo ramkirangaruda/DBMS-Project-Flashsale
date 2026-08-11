@@ -124,6 +124,15 @@ def _purge_orders_of(db, where_users_sql, params):
             SELECT id FROM orders WHERE user_id IN ({where_users_sql})
         )
     """), params)
+    # payments (app/models.py) is a newer FK-child of orders, same shape as
+    # flagged_orders/order_items above -- without deleting it first here,
+    # any order that ever had a /payment/create call against it blocks the
+    # DELETE FROM orders below with a foreign-key violation.
+    db.execute(text(f"""
+        DELETE FROM payments WHERE order_id IN (
+            SELECT id FROM orders WHERE user_id IN ({where_users_sql})
+        )
+    """), params)
     db.execute(text(f"DELETE FROM orders WHERE user_id IN ({where_users_sql})"), params)
 
 
@@ -170,7 +179,24 @@ def _drop_legacy_rows(db):
             SELECT id FROM orders WHERE sale_id IN ({legacy_sales})
         )
     """), p2)
+    # See the identical note in _purge_orders_of() above.
+    db.execute(text(f"""
+        DELETE FROM payments WHERE order_id IN (
+            SELECT id FROM orders WHERE sale_id IN ({legacy_sales})
+        )
+    """), p2)
     db.execute(text(f"DELETE FROM orders WHERE sale_id IN ({legacy_sales})"), p2)
+    # stock_audit_log (Section 7 recovery demo) references inventory.id and
+    # is now ALSO written by app/payments.py's decline-reconciliation path
+    # ("payment_declined_release" rows) -- this delete was missing before
+    # that existed and nothing had ever written a row here for these sales,
+    # so it never surfaced. Found by actually re-running this script against
+    # a database with real reconciliation rows in it, not by inspection.
+    db.execute(text(f"""
+        DELETE FROM stock_audit_log WHERE inventory_id IN (
+            SELECT id FROM inventory WHERE sale_id IN ({legacy_sales})
+        )
+    """), p2)
     db.execute(text(f"DELETE FROM inventory WHERE sale_id IN ({legacy_sales})"), p2)
     db.execute(text(f"DELETE FROM flash_sale_events WHERE id IN ({legacy_sales})"), p2)
     db.execute(
