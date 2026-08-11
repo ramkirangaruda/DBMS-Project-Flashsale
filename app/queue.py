@@ -50,6 +50,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import text
 
 from app.metrics import (
+    QUEUE_ADMISSION_LEADER,
     QUEUE_ADMITS,
     QUEUE_DEPTH,
     QUEUE_JOINS,
@@ -59,6 +60,15 @@ from app.metrics import (
 # How many buyers are released per tick, and how often. Together these set the
 # admission RATE (default 10 per 500ms = 20/s), which is the single knob that
 # decides how much concurrency the checkout endpoints ever see.
+#
+# THIS IS THE RATE ONE LEADER ADMITS AT, NOT THE FLEET'S RATE PRE-LEASE FIX.
+# Before the admission-worker leader election below existed, N horizontally
+# scaled replicas each ran their own admission-worker thread with no
+# coordination, so the fleet's real admission rate was silently N times this
+# number -- 3 replicas meant 60/s against a configured 20/s, discovered
+# during the horizontal-scaling phase. The lease in start_admission_worker()
+# ensures exactly one replica's loop is ever active, so this constant is now
+# genuinely the fleet's rate again, regardless of replica count.
 ADMIT_BATCH = int(os.getenv("QUEUE_ADMIT_BATCH", "10"))
 ADMIT_INTERVAL_S = float(os.getenv("QUEUE_ADMIT_INTERVAL", "0.5"))
 
@@ -68,10 +78,19 @@ ADMISSION_TTL_S = int(os.getenv("QUEUE_ADMISSION_TTL", "30"))
 
 SALE_REFRESH_S = 5.0            # how often the known-sale set is re-read
 
+# How long the admission-worker LEASE lasts before it must be renewed, and how
+# often a replica tries to renew/acquire it. The lease is deliberately several
+# ticks wide (not equal to ADMIT_INTERVAL_S) so ordinary scheduling jitter --
+# the GIL, a slow tick -- never causes two replicas to both believe they hold
+# it. A crashed leader's replacement takes over within one lease window, which
+# trades a brief admission pause for never double-admitting.
+ADMISSION_LEASE_MS = int(ADMIT_INTERVAL_S * 1000 * 4)
+
 Z_KEY = "queue:z:{sale_id}"
 GRANT_KEY = "queue:granted:{sale_id}:{queue_token}"
 TOKENS_KEY = "queue:tokens:{sale_id}"
 ADMISSION_KEY = "admission:{token}"
+ADMISSION_LEADER_KEY = "queue:admission:leader"
 
 router = APIRouter(prefix="/queue", tags=["queue"])
 
@@ -292,6 +311,65 @@ async def reset(r, sale_id):
 
 
 # --------------------------------------------------------------------------
+# Admission-worker leader election
+#
+# WHY THIS EXISTS: every API replica runs its own copy of the admission
+# worker (see start_admission_worker() below), and until this lease existed
+# nothing stopped every one of them from calling admit() on the same tick.
+# With 3 replicas that meant admitting 3x the configured batch per interval
+# -- a rate limiter that silently multiplies itself under horizontal
+# scaling, found (not guessed) during the scaling phase by sweeping K and
+# noticing the fleet's effective admission rate moved in lockstep with
+# replica count rather than with K.
+#
+# The fix is a Redis lease, not a bigger architectural move (a dedicated
+# singleton service/container) -- REJECTED for exactly the reason
+# app/idempotency.py rejects a Redis lock in front of Stripe's own
+# idempotency layer in app/payments.py: it would work, but it would ALSO
+# mean this module behaves differently depending on how many processes
+# happen to be running it, which is the opposite of what "horizontally
+# scaled" is supposed to mean. A lease acquired fresh every tick means the
+# code is identical whether it runs as the single host process or as N
+# container replicas -- with N=1 the lease is always trivially free, so
+# nothing changes for that deployment shape either.
+# --------------------------------------------------------------------------
+_worker_id = f"{os.getpid()}-{uuid.uuid4().hex[:8]}"
+
+# Atomic compare-and-renew: extend the lease ONLY if we still hold it.
+# Plain GET-then-PEXPIRE would have a real race -- the lease could expire
+# and a different replica could win it in the gap between our GET and our
+# PEXPIRE, and a bare PEXPIRE does not check the value, so we would extend
+# a lease that had just become someone else's. Lua makes the read-and-act
+# a single atomic step on the Redis server, closing that window entirely.
+_RENEW_LEASE_SCRIPT = """
+if redis.call("get", KEYS[1]) == ARGV[1] then
+    return redis.call("pexpire", KEYS[1], ARGV[2])
+else
+    return 0
+end
+"""
+
+
+def _try_lead(r, lease_ms=None):
+    """
+    True if THIS process holds the admission-worker lease for this tick,
+    having either just acquired it (nobody held it) or renewed it (we
+    already did). False means a different replica is leading right now --
+    admit() must not be called this tick.
+    """
+    lease_ms = lease_ms or ADMISSION_LEASE_MS
+    if r.set(ADMISSION_LEADER_KEY, _worker_id, nx=True, px=lease_ms):
+        return True
+    return bool(r.eval(_RENEW_LEASE_SCRIPT, 1, ADMISSION_LEADER_KEY, _worker_id, lease_ms))
+
+
+def is_admission_leader(r):
+    """Read-only check, for /queue/config and debugging -- not used on the
+    hot path, which calls _try_lead() directly."""
+    return r.get(ADMISSION_LEADER_KEY) == _worker_id
+
+
+# --------------------------------------------------------------------------
 # Background admission worker
 # --------------------------------------------------------------------------
 def _queued_sale_ids(r):
@@ -351,6 +429,15 @@ def start_admission_worker(r, session_factory, interval_s=None):
     admission controller must not share a scarce resource with the thing it
     is admitting people to, or it stops working exactly when it is needed.
 
+    THIRD THING THIS FUNCTION GUARDS AGAINST, ADDED LATER: horizontal
+    scaling. Guarding against double-start (below) stops ONE process from
+    running the loop twice; it does nothing about N separate PROCESSES each
+    running their own copy, which is exactly what 3 API replicas do. Every
+    tick now goes through `_try_lead()`, a Redis lease that only one
+    replica can hold at a time, before calling admit() -- see that
+    function's docstring for why a lease was chosen over a dedicated
+    singleton service.
+
     Guarded against double-start. `python -m app.main` executes this package
     once as __main__ and again when uvicorn imports "app.main:app", so an
     unguarded thread launch here would run TWO admission workers and silently
@@ -390,8 +477,20 @@ def start_admission_worker(r, session_factory, interval_s=None):
             try:
                 # Redis only, by construction. Nothing in this block may
                 # touch PostgreSQL -- see the docstring.
+                #
+                # Leadership gates ONLY admit() -- the one operation that
+                # must never run twice for the same tick. QUEUE_DEPTH stays
+                # unconditional: it is a read of shared Redis state (same
+                # value regardless of who reads it), and every replica's
+                # OWN /metrics series needs it populated -- Prometheus
+                # scrapes each replica separately, so gating this too would
+                # leave a permanent gap on every non-leader replica's series
+                # rather than a real signal.
+                is_leader = _try_lead(r)
+                QUEUE_ADMISSION_LEADER.set(1 if is_leader else 0)
                 for sale_id in _queued_sale_ids(r):
-                    admit(r, sale_id)
+                    if is_leader:
+                        admit(r, sale_id)
                     QUEUE_DEPTH.labels(sale_id=sale_id).set(
                         r.zcard(Z_KEY.format(sale_id=sale_id))
                     )
@@ -454,12 +553,20 @@ async def queue_reset(sale_id: str):
 def queue_config():
     """What the admission rate currently is. The comparison in
     results/queue_notes.md turns on these three numbers, so they are readable
-    rather than buried in environment variables."""
+    rather than buried in environment variables.
+
+    `admission_rate_per_s` is the FLEET rate, valid regardless of replica
+    count, because exactly one replica's `_try_lead()` ever wins the lease
+    per tick -- `is_leader_here` says whether it's THIS process, which is
+    otherwise invisible from outside (there's no header or port that
+    distinguishes which replica answered a request through nginx)."""
     return {
         "admit_batch": ADMIT_BATCH,
         "admit_interval_s": ADMIT_INTERVAL_S,
         "admission_rate_per_s": round(ADMIT_BATCH / ADMIT_INTERVAL_S, 2),
         "admission_ttl_s": ADMISSION_TTL_S,
+        "is_leader_here": is_admission_leader(_redis),
+        "worker_id": _worker_id,
     }
 
 
