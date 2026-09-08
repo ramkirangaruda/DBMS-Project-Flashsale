@@ -353,6 +353,70 @@ your report — there are no ground-truth bot labels for it. The 83% recall
 figure belongs only to the synthetic harness, which has labels by
 construction.
 
+## Deploying to Vercel
+
+Local/docker-compose and Vercel are genuinely different deployments, not one
+config with a flag -- see the note at the top of `app/queue.py`'s
+`IS_SERVERLESS` for why. There is no long-lived process on Vercel, so:
+
+- **Postgres and Redis are external.** Vercel has neither. Point
+  `DATABASE_URL` at a managed Postgres (this was built against
+  [Neon](https://neon.tech) -- its free tier and connection-pooler URL work
+  well for a serverless function) and `REDIS_URL` at a managed Redis with a
+  plain-protocol TLS endpoint (this was built against
+  [Upstash](https://upstash.com), which speaks `rediss://` on top of its REST
+  API). See `app/database.py` and `app/redisconf.py` for exactly how those
+  two variables are consumed -- both fall back to the local docker-compose
+  settings when unset, so nothing about local dev changes.
+- **The admission-worker background thread doesn't run.** `app/queue.py`
+  ticks the queue inline on the request path instead when `VERCEL=1`
+  (Vercel sets this automatically) -- see `_maybe_tick()` there.
+- **The demand-forecast chart is precomputed, not trained.** Training needs
+  scikit-learn/pandas/numpy and the ~23MB UCI dataset, neither of which
+  ships to a serverless function. `/demand-forecast` instead serves
+  `app/ml/forecast_sample.json`, the real captured output of a training run
+  -- see `app/ml/demand_forecast.py`'s `IS_SERVERLESS`.
+- **Tracing needs to be off.** There's no Jaeger collector on Vercel, so set
+  `OTEL_SDK_DISABLED=true` (see `app/tracing.py`) -- otherwise the first
+  request pays for an OTLP exporter that has nowhere to send spans.
+
+### Steps
+
+1. **Provision Postgres and Redis** (Neon + Upstash, or your own choices)
+   and note their connection strings.
+2. **Seed the database once**, pointed at your managed Postgres/Redis
+   instead of docker-compose's:
+   ```bash
+   DATABASE_URL="postgresql://...neon..." REDIS_URL="rediss://...upstash..." \
+     python -m scripts.seed
+   DATABASE_URL="postgresql://...neon..." REDIS_URL="rediss://...upstash..." \
+     python -m scripts.seed_storefront --drop-in 60
+   ```
+3. **Import the repo into Vercel** (vercel.com -> Add New Project -> your
+   GitHub repo). `vercel.json` already declares both build steps --
+   `api/index.py` (the FastAPI app, via `@vercel/python`) and `frontend/`
+   (via `@vercel/static-build`) -- so the default "Other" framework preset
+   is fine; nothing needs overriding in the dashboard.
+4. **Set environment variables** on the Vercel project (Settings ->
+   Environment Variables):
+
+   | Variable | Value |
+   |---|---|
+   | `DATABASE_URL` | your Neon (or other) connection string |
+   | `REDIS_URL` | your Upstash (or other) `rediss://` connection string |
+   | `OTEL_SDK_DISABLED` | `true` |
+   | `CORS_ORIGINS` | `*` (default -- fine here, see app/main.py's note) |
+   | `ADMIN_TOKEN` | optional -- set this before sharing the link publicly, see `POST /admin/reset-sale` |
+
+5. **Deploy.** The frontend calls the API at the same origin (see
+   `frontend/src/api.js` -- `BASE` is `''` in a production build), so there
+   is exactly one URL to share, same as the LAN demo above.
+
+Everything under `app/demos/`, the ML training scripts, Prometheus/Grafana/
+Jaeger and the report generator are **not** part of this deployment --
+they're the local/docker-compose side of this project, covered by the rest
+of this README, and none of them are reachable from a live request anyway.
+
 ## Live demo with friends
 
 The storefront and the API are served by **one process on one port**, so
@@ -451,6 +515,7 @@ trusted Wi-Fi and is why it's documented rather than defaulted on.
 |---|---|
 | `http://<LAN-IP>:8010/` | the storefront (share this one) |
 | `http://<LAN-IP>:8010/sale/<sale_id>` | a specific sale |
+| `/engines` | the Engine Room -- an animated tour of every concurrency/indexing/recovery/ML mechanism above, in story form |
 | `/dashboard` | the live metrics dashboard |
 | `/docs` | Swagger |
 | `/api` | JSON endpoint index (moved off `/` so `/` can serve the shop) |
