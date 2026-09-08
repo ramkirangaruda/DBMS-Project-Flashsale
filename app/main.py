@@ -2,8 +2,9 @@
 FastAPI application tying the project together into something demoable
 live in a browser/Postman, not just via scripts.
 
-Run with: venv/bin/uvicorn app.main:app --reload --port 8000
-Then visit http://localhost:8000/docs for interactive API docs.
+Run with: venv/bin/uvicorn app.main:app --reload --port 8010
+Then visit http://localhost:8010/docs for interactive API docs.
+(8010, not 8000 -- see the port note on __main__ at the bottom of this file.)
 """
 import os
 import random

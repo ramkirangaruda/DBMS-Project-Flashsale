@@ -76,6 +76,14 @@ Then open `http://192.168.1.20:5173` on each phone. CORS defaults to `*`,
 which is fine for a LAN demo — see the note in `app/main.py` about locking
 it down for anything real.
 
+## The Engine Room
+
+`/engines` is a separate, story-form page (not part of the shopping flow)
+walking through every concurrency/indexing/recovery/ML mechanism this
+project runs, each with a small looping SVG diagram -- see
+`src/pages/EngineRoom.jsx` and `src/components/engine/`. Linked from the
+header as "Engine Room".
+
 ## Notes
 
 - Each browser picks one of `scripts/seed.py`'s 30 fixed demo users at
