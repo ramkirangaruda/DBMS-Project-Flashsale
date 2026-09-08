@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { fetchSales, serverNow } from '../api.js'
 import {
-  CountdownPill, DiscountBadge, FlashBadge, PriceRow, ProductArt, StockBar,
+  CountdownPill, DiscountBadge, FlashBadge, PriceRow, ProductArt, StarRating, StockBar,
   useServerCountdown,
 } from '../components/bits.jsx'
 import Header from '../components/Header.jsx'
+import { seededRating } from '../lib/demo.js'
 
 /**
  * Ranks sales for the hero. "Most urgent" = closest to selling out, or
@@ -51,6 +52,8 @@ function Hero({ sale }) {
         <h2 className="max-w-xl text-3xl font-black leading-[1.05] tracking-tight text-white sm:text-5xl">
           {sale.product}
         </h2>
+
+        <StarRating {...seededRating(sale.sale_id)} dark />
 
         <div className="flex flex-wrap items-center gap-4">
           <div className="text-white">
@@ -113,6 +116,7 @@ function ProductCard({ sale }) {
           {sale.category || 'gadget'}
         </div>
         <h3 className="text-sm font-bold leading-snug tracking-tight">{sale.product}</h3>
+        <StarRating {...seededRating(sale.sale_id)} />
         <PriceRow base={sale.base_price} sale={sale.sale_price} />
         <div className="mt-auto space-y-3">
           <StockBar available={sale.available} total={sale.total_stock} />

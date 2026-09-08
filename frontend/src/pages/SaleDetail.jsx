@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { checkout, fetchSale, resetSale, serverNow } from '../api.js'
-import { getAdminMode, getAdminToken, getDemoUserId, getStrategy, money } from '../lib/demo.js'
+import { getAdminMode, getAdminToken, getDemoUserId, getStrategy, money, seededRating } from '../lib/demo.js'
 import {
-  CountdownPill, DiscountBadge, FlashBadge, PriceRow, ProductArt, StockBar,
-  useServerCountdown,
+  CountdownPill, DiscountBadge, FlashBadge, PriceRow, ProductArt, StarRating, StockBar,
+  TrustBadges, useServerCountdown,
 } from '../components/bits.jsx'
 import ResultOverlay from '../components/ResultOverlay.jsx'
 import Header from '../components/Header.jsx'
@@ -173,6 +173,7 @@ export default function SaleDetail() {
             <h1 className="mt-1.5 text-3xl font-black leading-tight tracking-tight sm:text-4xl">
               {sale.product}
             </h1>
+            <StarRating {...seededRating(sale.sale_id)} className="mt-2" />
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
@@ -183,6 +184,18 @@ export default function SaleDetail() {
               </span>
             )}
           </div>
+
+          <TrustBadges />
+
+          {sale.reserved_stock > 0 && !notStarted && (
+            <p className="-mt-2 flex items-center gap-1.5 text-xs font-bold text-neutral-500">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+              </span>
+              {sale.reserved_stock} {sale.reserved_stock === 1 ? 'person has' : 'people have'} already grabbed this
+            </p>
+          )}
 
           {notStarted ? (
             <DropCountdown ms={untilStart} />

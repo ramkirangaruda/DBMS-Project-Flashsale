@@ -109,3 +109,29 @@ export function formatDuration(ms) {
 
 export const money = (n) =>
   `$${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+
+/**
+ * Deterministic star rating + review count for a product, seeded off its
+ * sale_id so it's stable across renders and reloads instead of jumping
+ * around every poll. There's no reviews table behind this -- flash-sale
+ * items are, definitionally, too new to have any -- so this is storefront
+ * dressing, the same category as the search bar in Header.jsx: it makes
+ * the page read like a shop instead of an API response, without pretending
+ * to be real user data anywhere it could mislead (no reviewer names, no
+ * review text, just the aggregate a listing page shows before you click in).
+ */
+function seed32(str) {
+  let h = 2166136261
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return h >>> 0
+}
+
+export function seededRating(id) {
+  const h = seed32(String(id))
+  const stars = Math.round((3.9 + (h % 100) / 100) * 10) / 10 // 3.9 - 4.9
+  const count = 80 + ((h >>> 8) % 4200) // 80 - 4279
+  return { stars, count }
+}

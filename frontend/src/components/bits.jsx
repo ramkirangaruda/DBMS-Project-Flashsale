@@ -105,6 +105,49 @@ export function ProductArt({ category, className = '', glyphClass = 'text-6xl' }
   )
 }
 
+/** Star rating + review count -- see seededRating() in lib/demo.js for where the numbers come from. */
+export function StarRating({ stars, count, className = '', dark = false }) {
+  const pct = Math.round((stars / 5) * 100)
+  return (
+    <div className={`flex items-center gap-1.5 ${className}`}>
+      <div className="relative text-xs leading-none tracking-[1px]">
+        <span className={dark ? 'text-white/25' : 'text-neutral-300'}>★★★★★</span>
+        <span
+          className="absolute inset-0 overflow-hidden whitespace-nowrap text-amber-400"
+          style={{ width: `${pct}%` }}
+        >
+          ★★★★★
+        </span>
+      </div>
+      <span className={`text-[11px] font-bold ${dark ? 'text-white/70' : 'text-neutral-500'}`}>
+        {stars.toFixed(1)}
+        {count != null && <span className="font-medium opacity-70"> · {count.toLocaleString()}</span>}
+      </span>
+    </div>
+  )
+}
+
+const TRUST_ITEMS = [
+  { glyph: '🚚', label: 'Delivered in 2-4 days' },
+  { glyph: '↩️', label: '7-day easy returns' },
+  { glyph: '🔒', label: 'Secure checkout' },
+]
+
+/** Row of trust-signal chips -- delivery/returns/payment. Every real
+ * ecommerce PDP has this row; it costs nothing and reads as real polish. */
+export function TrustBadges({ className = '' }) {
+  return (
+    <div className={`flex flex-wrap gap-x-4 gap-y-1.5 text-[11px] font-semibold text-neutral-500 ${className}`}>
+      {TRUST_ITEMS.map((t) => (
+        <span key={t.label} className="inline-flex items-center gap-1.5">
+          <span aria-hidden>{t.glyph}</span>
+          {t.label}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 export function PriceRow({ base, sale, size = 'md' }) {
   const big = size === 'lg'
   return (
