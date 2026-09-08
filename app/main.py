@@ -28,6 +28,14 @@ from app.admission import install as install_admission
 from app.tracing import install as install_tracing
 from app.ml.demand_forecast import get_forecast_sample
 
+# Vercel sets VERCEL=1 in every function's environment. Checked in a few
+# places below where "local/docker-compose, one long-lived process" and
+# "serverless, no persistent process, no filesystem beyond the deploy
+# bundle" need genuinely different behaviour -- see app/queue.py's matching
+# flag for the admission-worker thread, and app/ml/demand_forecast.py's for
+# the forecast cache.
+IS_SERVERLESS = bool(os.getenv("VERCEL"))
+
 app = FastAPI(
     title="Flash-Sale Inventory & Oversell Prevention Engine",
     description="DBMS course project -- concurrency control, indexing, recovery, and ML demand/bot detection.",
@@ -134,6 +142,13 @@ def log_checkout_attempt(user_id, sale_id, order_id, page_load_time, checkout_ti
 @app.on_event("startup")
 def startup():
     Base.metadata.create_all(bind=engine)
+    if IS_SERVERLESS:
+        # get_forecast_sample() just reads forecast_sample.json here (see
+        # app/ml/demand_forecast.IS_SERVERLESS) -- fast enough to not need
+        # warming, and a background thread has no guaranteed future on
+        # Vercel to warm anything FOR anyway. See app/queue.py's matching
+        # note on why the admission worker thread is skipped the same way.
+        return
     # Warm the /demand-forecast cache in the background so the dashboard's
     # chart doesn't stall a live demo on the first request (training on the
     # real dataset takes well over a minute).
@@ -585,9 +600,16 @@ class SPAStaticFiles(StaticFiles):
             raise
 
 
-if os.path.isdir(FRONTEND_DIST):
+# On Vercel the storefront is a SEPARATE build (@vercel/static-build over
+# frontend/, routed by vercel.json) served from its own part of the deploy --
+# this API function never gets frontend/dist bundled into it at all (see
+# .vercelignore), so os.path.isdir(FRONTEND_DIST) is always False there
+# anyway. IS_SERVERLESS is checked explicitly too, rather than relying on
+# that, so this block does nothing observable on Vercel even if a future
+# change to the build made the directory appear.
+if not IS_SERVERLESS and os.path.isdir(FRONTEND_DIST):
     app.mount("/", SPAStaticFiles(directory=FRONTEND_DIST, html=True), name="storefront")
-else:
+elif not IS_SERVERLESS:
     @app.get("/")
     def storefront_missing():
         return {

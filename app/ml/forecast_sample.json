@@ -1,0 +1,57 @@
+{
+  "source": "UCI Online Retail dataset (real data)",
+  "mae": 21.84,
+  "r2": 0.082,
+  "samples": [
+    {
+      "label": "SKU sample 1",
+      "predicted": 67.1,
+      "actual": 60.0
+    },
+    {
+      "label": "SKU sample 2",
+      "predicted": 79.0,
+      "actual": 0.0
+    },
+    {
+      "label": "SKU sample 3",
+      "predicted": 1.5,
+      "actual": 0.0
+    },
+    {
+      "label": "SKU sample 4",
+      "predicted": 27.6,
+      "actual": 10.0
+    },
+    {
+      "label": "SKU sample 5",
+      "predicted": 18.1,
+      "actual": 0.0
+    },
+    {
+      "label": "SKU sample 6",
+      "predicted": 21.8,
+      "actual": 3.0
+    },
+    {
+      "label": "SKU sample 7",
+      "predicted": 17.0,
+      "actual": 100.0
+    },
+    {
+      "label": "SKU sample 8",
+      "predicted": 8.4,
+      "actual": 0.0
+    },
+    {
+      "label": "SKU sample 9",
+      "predicted": -0.2,
+      "actual": 0.0
+    },
+    {
+      "label": "SKU sample 10",
+      "predicted": 5.7,
+      "actual": 0.0
+    }
+  ]
+}

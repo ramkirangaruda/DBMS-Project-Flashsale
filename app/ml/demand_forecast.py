@@ -77,14 +77,17 @@ Run with: venv/bin/python -m app.ml.demand_forecast
              (add --framings to also run the framing comparison above;
               it retrains several models and takes a few extra minutes)
 """
+import json
 import os
 import threading
-import numpy as np
-import pandas as pd
-from sklearn.ensemble import GradientBoostingRegressor
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_absolute_error, r2_score
 
+# numpy/pandas/scikit-learn are imported lazily, inside the functions that
+# actually train a model, rather than up here at module load. That is what
+# lets app/main.py import get_forecast_sample() -- and, transitively, this
+# whole module -- in the Vercel deployment without those three packages
+# needing to be in the serverless function's bundle at all: get_forecast_sample()
+# never reaches the functions below it when IS_SERVERLESS, it serves
+# forecast_sample.json instead. See the note on IS_SERVERLESS further down.
 DATA_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "online_retail.xlsx"
 )
@@ -103,6 +106,9 @@ def generate_synthetic_fallback_data(n=2000, seed=42):
     flash-sale demand patterns (price elasticity, weekday effects, category
     popularity, promotional buzz) -- but it is NOT real data. See
     load_real_data() for the actual Section 10.1 model."""
+    import numpy as np
+    import pandas as pd
+
     rng = np.random.default_rng(seed)
 
     base_price = rng.uniform(20, 300, n)
@@ -180,6 +186,8 @@ def _build_daily_panel(path=DATA_PATH, top_n_skus=500, pre_period_days=7):
     construction, and it is also why ~51% of panel rows have a zero target:
     these SKUs genuinely do not sell every day. See the module docstring.
     """
+    import pandas as pd
+
     df = pd.read_excel(path)
 
     df = df[~df["InvoiceNo"].astype(str).str.startswith("C")]
@@ -245,6 +253,10 @@ def load_real_data(path=DATA_PATH, top_n_skus=500, pre_period_days=7):
 def _fit(force_synthetic=False):
     """Shared training step behind both train_and_evaluate() (prints a full
     report) and get_forecast_sample() (returns JSON for the live dashboard)."""
+    from sklearn.ensemble import GradientBoostingRegressor
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import mean_absolute_error, r2_score
+
     use_real = (not force_synthetic) and os.path.exists(DATA_PATH)
 
     if use_real:
@@ -277,6 +289,10 @@ def _eval_framing(df, feature_cols, target_col):
     """Fit the SAME model config used everywhere else on an arbitrary
     feature/target pair. Used by compare_framings() so every row of that
     table differs only in what is being predicted, never in how."""
+    from sklearn.ensemble import GradientBoostingRegressor
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import mean_absolute_error, r2_score
+
     d = df.dropna(subset=list(feature_cols) + [target_col])
     if len(d) < 100:
         return None
@@ -449,6 +465,29 @@ def train_and_evaluate(force_synthetic=False):
 _dashboard_cache = None
 _dashboard_lock = threading.Lock()
 
+# Same flag app/queue.py checks -- Vercel sets VERCEL=1 in every function's
+# environment. There is no data/online_retail.xlsx in that deployment (it's
+# a ~23MB file, gitignored, never uploaded to Vercel -- see the README), and
+# training even the synthetic fallback needs scikit-learn/pandas/numpy,
+# which would otherwise have to ship inside the serverless function's
+# package purely to explain a demo chart. So on Vercel this serves a
+# precomputed sample instead of training anything -- see
+# STATIC_SAMPLE_PATH below.
+IS_SERVERLESS = bool(os.getenv("VERCEL"))
+
+STATIC_SAMPLE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "forecast_sample.json")
+
+
+def _static_forecast_sample(n):
+    """The exact output of get_forecast_sample(n=10) against the real UCI
+    dataset, captured once and committed -- see the README's Section 10.1
+    writeup for the same numbers (MAE 21.84, R^2 0.082). Regenerate it with
+    `python -m app.ml.demand_forecast --write-static-sample` after retraining."""
+    with open(STATIC_SAMPLE_PATH) as f:
+        cached = json.load(f)
+    cached["samples"] = cached["samples"][:n]
+    return cached
+
 
 def get_forecast_sample(n=10):
     """Trains once (cached for the life of the process) and returns a small
@@ -459,6 +498,9 @@ def get_forecast_sample(n=10):
     Guarded by a lock so the startup warm-up thread and an early dashboard
     request can't both see an empty cache and each kick off their own
     multi-minute training run at the same time."""
+    if IS_SERVERLESS:
+        return _static_forecast_sample(n)
+
     global _dashboard_cache
     if _dashboard_cache is None:
         with _dashboard_lock:
@@ -481,7 +523,19 @@ def get_forecast_sample(n=10):
 if __name__ == "__main__":
     import sys
 
-    train_and_evaluate()
-    if "--framings" in sys.argv:
-        print()
-        compare_framings()
+    if "--write-static-sample" in sys.argv:
+        # Regenerates app/ml/forecast_sample.json (see _static_forecast_sample
+        # above) from a fresh training run against whatever's at DATA_PATH --
+        # run this after retraining if you want the Vercel deployment's
+        # /demand-forecast chart to reflect it. IS_SERVERLESS is False for a
+        # local run, so this trains rather than reading the static file back.
+        sample = get_forecast_sample(n=10)
+        with open(STATIC_SAMPLE_PATH, "w") as f:
+            json.dump(sample, f, indent=2)
+        print(f"Wrote {STATIC_SAMPLE_PATH}")
+        print(json.dumps(sample, indent=2))
+    else:
+        train_and_evaluate()
+        if "--framings" in sys.argv:
+            print()
+            compare_framings()
