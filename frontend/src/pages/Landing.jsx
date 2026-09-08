@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { fetchSales, serverNow } from '../api.js'
 import {
@@ -131,9 +131,34 @@ function ProductCard({ sale }) {
   )
 }
 
+/** Row of category filter chips above the product grid -- every real
+ * ecommerce homepage has a way to narrow the grid down, and with 12
+ * categories in the catalogue now, scanning the whole thing to find one
+ * kind of product stops being reasonable. */
+function CategoryChips({ categories, active, onChange }) {
+  return (
+    <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:flex-wrap sm:px-0">
+      {categories.map((c) => (
+        <button
+          key={c}
+          onClick={() => onChange(c)}
+          className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-bold capitalize tracking-wide transition ${
+            active === c
+              ? 'bg-neutral-900 text-white'
+              : 'bg-white text-neutral-500 ring-1 ring-neutral-200 hover:text-neutral-900'
+          }`}
+        >
+          {c}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export default function Landing() {
   const [sales, setSales] = useState(null)
   const [error, setError] = useState(null)
+  const [category, setCategory] = useState('all')
 
   useEffect(() => {
     let alive = true
@@ -153,6 +178,12 @@ export default function Landing() {
   const ranked = sales ? rankForHero(sales) : []
   const hero = ranked[0]
   const rest = ranked.slice(1)
+
+  const categories = useMemo(
+    () => ['all', ...new Set(rest.map((s) => s.category).filter(Boolean))],
+    [rest],
+  )
+  const visible = category === 'all' ? rest : rest.filter((s) => s.category === category)
 
   return (
     <div className="min-h-screen">
@@ -194,14 +225,25 @@ export default function Landing() {
             <div className="mb-4 flex items-baseline justify-between">
               <h2 className="text-xl font-black tracking-tight">More deals</h2>
               <span className="text-xs font-bold uppercase tracking-widest text-neutral-400">
-                {rest.length} live
+                {visible.length} of {rest.length}
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-              {rest.map((s) => (
-                <ProductCard key={s.sale_id} sale={s} />
-              ))}
-            </div>
+
+            {categories.length > 2 && (
+              <CategoryChips categories={categories} active={category} onChange={setCategory} />
+            )}
+
+            {visible.length === 0 ? (
+              <p className="mt-6 text-center text-sm text-neutral-400">
+                Nothing live in that category right now.
+              </p>
+            ) : (
+              <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
+                {visible.map((s) => (
+                  <ProductCard key={s.sale_id} sale={s} />
+                ))}
+              </div>
+            )}
           </section>
         )}
       </main>
