@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { serverNow } from '../api.js'
-import { categoryStyle, formatDuration, money } from '../lib/demo.js'
+import { categoryStyle, formatDuration, isWishlisted, money, toggleWishlist } from '../lib/demo.js'
 
 /* ---------------- Countdown driven by the SERVER clock ---------------- */
 
@@ -89,6 +89,37 @@ export function StockBar({ available, total, className = '' }) {
         />
       </div>
     </div>
+  )
+}
+
+/** Heart toggle -- see the wishlist helpers in lib/demo.js for what backs it. */
+export function WishlistButton({ saleId, className = '' }) {
+  const [on, setOn] = useState(() => isWishlisted(saleId))
+
+  return (
+    <button
+      type="button"
+      aria-label={on ? 'Remove from wishlist' : 'Add to wishlist'}
+      aria-pressed={on}
+      onClick={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        toggleWishlist(saleId)
+        setOn((v) => !v)
+      }}
+      className={`grid h-8 w-8 place-items-center rounded-full bg-black/40 backdrop-blur transition hover:bg-black/60 active:scale-90 ${className}`}
+    >
+      <svg
+        viewBox="0 0 20 20"
+        className={`h-4 w-4 transition ${on ? 'fill-red-500 stroke-red-500' : 'fill-none stroke-white'}`}
+        strokeWidth="1.8"
+      >
+        <path
+          d="M10 17s-6.5-4.02-6.5-8.5A3.75 3.75 0 0110 6a3.75 3.75 0 016.5 2.5C16.5 12.98 10 17 10 17z"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </button>
   )
 }
 

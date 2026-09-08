@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { fetchSales, serverNow } from '../api.js'
 import {
   CountdownPill, DiscountBadge, FlashBadge, PriceRow, ProductArt, StarRating, StockBar,
-  useServerCountdown,
+  WishlistButton, useServerCountdown,
 } from '../components/bits.jsx'
 import Header from '../components/Header.jsx'
 import { seededRating } from '../lib/demo.js'
@@ -102,6 +102,7 @@ function ProductCard({ sale }) {
         <div className="absolute left-3 top-3 flex gap-1.5">
           <DiscountBadge pct={sale.discount_pct} />
         </div>
+        <WishlistButton saleId={sale.sale_id} className="absolute right-3 top-3" />
         {sale.sold_out && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/65">
             <span className="rounded bg-white px-3 py-1.5 text-xs font-black uppercase tracking-widest">

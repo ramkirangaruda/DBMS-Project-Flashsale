@@ -72,6 +72,43 @@ export function getAdminToken() {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * Wishlist -- purely client-side (localStorage), same honesty boundary
+ * as everything else marked "storefront dressing" in this file: there's
+ * no account system, so there's nothing server-side to sync it with.
+ * Components that need to react to a change made elsewhere (Header's
+ * badge count, in particular) listen for the 'wishlist-change' window
+ * event this dispatches, rather than sharing state through a store this
+ * app otherwise has no reason to have.
+ * ------------------------------------------------------------------ */
+const WISHLIST_KEY = 'flashsale.wishlist'
+
+export function getWishlist() {
+  try {
+    return JSON.parse(localStorage.getItem(WISHLIST_KEY) || '[]')
+  } catch {
+    return []
+  }
+}
+
+export function isWishlisted(saleId) {
+  return getWishlist().includes(saleId)
+}
+
+export function toggleWishlist(saleId) {
+  const current = getWishlist()
+  const next = current.includes(saleId)
+    ? current.filter((id) => id !== saleId)
+    : [...current, saleId]
+  try {
+    localStorage.setItem(WISHLIST_KEY, JSON.stringify(next))
+  } catch {
+    /* storage blocked -- the toggle just won't persist across reloads */
+  }
+  window.dispatchEvent(new Event('wishlist-change'))
+  return next
+}
+
 /** Visual identity for a product category -- gradient + glyph, no photos needed. */
 const CATEGORY_STYLES = {
   earbuds:    { from: 'from-violet-500',  to: 'to-fuchsia-600', glyph: '🎧' },

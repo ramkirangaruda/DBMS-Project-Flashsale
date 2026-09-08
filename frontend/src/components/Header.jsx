@@ -1,18 +1,30 @@
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { getWishlist } from '../lib/demo.js'
 
 /**
  * Shared top nav for every page -- was previously copy-pasted between
  * Landing and SaleDetail with slightly different contents each time.
  *
- * The search bar and cart/wishlist icons are visual only (this storefront
- * has no account system or cart -- Buy Now checks out a single unit
- * immediately, which is the point of a flash-sale drop), but a real
- * ecommerce header has them, and a demo that's missing them reads as a
- * prototype rather than a shop.
+ * The search bar and cart icon are visual only (this storefront has no
+ * account system or cart -- Buy Now checks out a single unit immediately,
+ * which is the point of a flash-sale drop), but a real ecommerce header has
+ * them, and a demo that's missing them reads as a prototype rather than a
+ * shop. The wishlist heart is the one exception -- it's a real, if purely
+ * client-side (localStorage), toggle; see WishlistButton in bits.jsx and
+ * the wishlist helpers in lib/demo.js.
  */
 export default function Header({ active }) {
   const linkClass = (key) =>
     `transition ${active === key ? 'text-white' : 'text-white/70 hover:text-white'}`
+
+  const [wishlistCount, setWishlistCount] = useState(0)
+  useEffect(() => {
+    const sync = () => setWishlistCount(getWishlist().length)
+    sync()
+    window.addEventListener('wishlist-change', sync)
+    return () => window.removeEventListener('wishlist-change', sync)
+  }, [])
 
   return (
     <header className="sticky top-0 z-30 border-b border-neutral-800 bg-neutral-900">
@@ -42,8 +54,8 @@ export default function Header({ active }) {
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
             Live
           </span>
-          <IconButton label="Wishlist">
-            <HeartGlyph />
+          <IconButton label="Wishlist" badge={wishlistCount}>
+            <HeartGlyph filled={wishlistCount > 0} />
           </IconButton>
           <IconButton label="Cart">
             <BagGlyph />
@@ -54,14 +66,19 @@ export default function Header({ active }) {
   )
 }
 
-function IconButton({ label, children }) {
+function IconButton({ label, children, badge }) {
   return (
     <button
       type="button"
       title={label}
-      className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-white/80 transition hover:bg-white/10 hover:text-white"
+      className="relative grid h-8 w-8 shrink-0 place-items-center rounded-full text-white/80 transition hover:bg-white/10 hover:text-white"
     >
       {children}
+      {badge > 0 && (
+        <span className="absolute -right-1 -top-1 grid h-4 min-w-[16px] place-items-center rounded-full bg-orange-500 px-1 text-[9px] font-black text-white">
+          {badge}
+        </span>
+      )}
     </button>
   )
 }
@@ -75,9 +92,13 @@ function SearchGlyph() {
   )
 }
 
-function HeartGlyph() {
+function HeartGlyph({ filled }) {
   return (
-    <svg viewBox="0 0 20 20" className="h-4 w-4 fill-none stroke-current" strokeWidth="1.8">
+    <svg
+      viewBox="0 0 20 20"
+      className={`h-4 w-4 stroke-current transition ${filled ? 'fill-orange-500' : 'fill-none'}`}
+      strokeWidth="1.8"
+    >
       <path
         d="M10 17s-6.5-4.02-6.5-8.5A3.75 3.75 0 0110 6a3.75 3.75 0 016.5 2.5C16.5 12.98 10 17 10 17z"
         strokeLinejoin="round"
