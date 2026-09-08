@@ -41,6 +41,10 @@ export default function SaleDetail() {
   const [result, setResult] = useState(null)
   const [busy, setBusy] = useState(false)
   const [flash, setFlash] = useState(false)
+  // {phase: 'queued'|'admitted'|'checking-out', position, etaS} while a buy
+  // is in flight -- the waiting room is the interesting part of the demo, so
+  // it gets shown rather than hidden behind a spinner.
+  const [queue, setQueue] = useState(null)
 
   // Read once on mount and never surfaced in the UI.
   const strategyRef = useRef(getStrategy())
@@ -94,15 +98,18 @@ export default function SaleDetail() {
   const buy = useCallback(async () => {
     if (busy) return
     setBusy(true)
+    setQueue(null)
     try {
       const r = await checkout({
         saleId,
         userId: userIdRef.current,
         strategy: strategyRef.current,
+        onProgress: setQueue,
       })
       setResult(r)
     } finally {
       setBusy(false)
+      setQueue(null)
     }
   }, [busy, saleId])
 
@@ -133,7 +140,9 @@ export default function SaleDetail() {
   const canBuy = !notStarted && !soldOut && !ended && !busy
 
   let label = 'Buy Now'
-  if (busy) label = 'Placing order…'
+  if (busy && queue?.phase === 'queued' && queue.position > 1) label = `In line · #${queue.position}`
+  else if (busy && queue?.phase === 'queued') label = 'Entering…'
+  else if (busy) label = 'Placing order…'
   else if (notStarted) label = 'Opens soon'
   else if (ended) label = 'Sale ended'
   else if (soldOut) label = 'Sold out'
@@ -215,6 +224,24 @@ export default function SaleDetail() {
           >
             {label}
           </button>
+
+          {busy && queue?.phase === 'queued' && (
+            <div className="-mt-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-center">
+              <div className="text-[10px] font-black uppercase tracking-[0.14em] text-amber-600">
+                Waiting room
+              </div>
+              <p className="mt-1 text-sm font-bold text-amber-900">
+                {queue.position > 1
+                  ? `You're #${queue.position} in line`
+                  : 'You’re next — hold on'}
+                {queue.etaS ? ` · ~${queue.etaS}s` : ''}
+              </p>
+              <p className="mt-1 text-[11px] text-amber-700/70">
+                Buyers are released to checkout in small batches, so the
+                database never sees the whole crowd at once.
+              </p>
+            </div>
+          )}
 
           {notStarted && (
             <p className="-mt-2 text-center text-xs text-neutral-400">

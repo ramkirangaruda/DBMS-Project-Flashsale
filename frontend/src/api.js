@@ -85,23 +85,113 @@ export async function fetchSale(saleId) {
 
 export const STRATEGIES = ['pessimistic', 'optimistic', 'redis']
 
+/* ------------------------------------------------------------------ *
+ * Virtual waiting room
+ *
+ * The checkout endpoints sit behind an admission door (app/admission.py):
+ * a POST without a valid X-Admission-Token is refused with 403 before it
+ * ever reaches a handler. So "Buy Now" is not one request, it is three:
+ *
+ *     POST /queue/join/{sale_id}      -> queue_token, position
+ *     GET  /queue/status/{sale_id}    -> poll until admitted -> admission_token
+ *     POST /checkout/{strategy}       with X-Admission-Token
+ *
+ * That whole dance lives in here rather than in the component, so the UI
+ * still calls one checkout() and only has to render `status`.
+ * ------------------------------------------------------------------ */
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+export async function joinQueue(saleId) {
+  const { res, data } = await request(`/queue/join/${saleId}`, { method: 'POST' })
+  if (!res.ok) throw new Error((data && data.detail) || `Could not join the queue (HTTP ${res.status}).`)
+  return data
+}
+
+export async function queueStatus(saleId, queueToken) {
+  const qs = new URLSearchParams({ token: queueToken })
+  const { res, data } = await request(`/queue/status/${saleId}?${qs}`)
+  if (!res.ok) throw new Error(`Queue status failed (HTTP ${res.status}).`)
+  return data
+}
+
+/**
+ * Join the queue and poll until admitted, reporting progress as we go.
+ *
+ * Poll cadence follows the server's own `estimated_wait_s` rather than a
+ * fixed interval: a buyer 900 places back should sleep seconds between
+ * polls, not milliseconds, or a thousand clients rebuild the very stampede
+ * the waiting room exists to absorb. Clamped to [250ms, 2s] so the last few
+ * places still feel instant.
+ */
+async function waitForAdmission(saleId, onProgress, deadlineMs) {
+  const joined = await joinQueue(saleId)
+  onProgress?.({ phase: 'queued', position: joined.position, etaS: joined.estimated_wait_s })
+
+  let st = joined
+  while (Date.now() < deadlineMs) {
+    st = await queueStatus(saleId, joined.queue_token)
+    if (st.admitted) {
+      onProgress?.({ phase: 'admitted' })
+      return st.admission_token
+    }
+    if (st.expired) throw new Error('Your place in the queue expired. Tap Buy Now to rejoin.')
+    onProgress?.({ phase: 'queued', position: st.position, etaS: st.estimated_wait_s })
+    await sleep(Math.min(2000, Math.max(250, (st.estimated_wait_s ?? 0.5) * 1000)))
+  }
+  throw new Error('Timed out waiting for the queue. Tap Buy Now to try again.')
+}
+
 /**
  * POST a checkout. Every strategy returns the same body shape
  * ({status, order_id, message, strategy}) on success AND on failure, so this
  * never has to branch on which endpoint it hit -- only on `status`.
+ *
+ * `onProgress` is optional and receives {phase, position, etaS} so the button
+ * can show "You're #12 in line" instead of freezing on "Placing order…".
  */
-export async function checkout({ saleId, userId, strategy }) {
+export async function checkout({ saleId, userId, strategy, onProgress, timeoutMs = 120000 }) {
   const s = STRATEGIES.includes(strategy) ? strategy : 'redis'
-  const qs = new URLSearchParams({ sale_id: saleId, user_id: userId })
-  const { res, data } = await request(`/checkout/${s}?${qs}`, { method: 'POST' })
+  const deadline = Date.now() + timeoutMs
 
-  if (data && data.status) return data
-  // Network-level or unexpected failure -- normalise into the same shape.
-  return {
-    status: 'failed',
-    order_id: null,
-    message: `Checkout failed (HTTP ${res.status}).`,
-    strategy: s,
+  // One key per user intent (one tap). Protects against a network-level
+  // retry double-charging, while still letting a genuine "try again" after
+  // a sold-out run as a fresh attempt rather than replaying the cached miss.
+  const idempotencyKey =
+    (crypto.randomUUID && crypto.randomUUID()) ||
+    `${saleId}-${userId}-${Date.now()}-${Math.random()}`
+
+  const attempt = async (admissionToken) => {
+    const qs = new URLSearchParams({ sale_id: saleId, user_id: userId })
+    onProgress?.({ phase: 'checking-out' })
+    return request(`/checkout/${s}?${qs}`, {
+      method: 'POST',
+      headers: {
+        'X-Admission-Token': admissionToken,
+        'Idempotency-Key': idempotencyKey,
+      },
+    })
+  }
+
+  try {
+    let { res, data } = await attempt(await waitForAdmission(saleId, onProgress, deadline))
+
+    // The grant is a 30s shopping window. If it lapsed between being handed
+    // out and being used, rejoin once and retry -- the buyer queued properly
+    // and should not be punished for a slow round trip.
+    if (res.status === 403 && res.headers.get('X-Admission-Required') && Date.now() < deadline) {
+      ;({ res, data } = await attempt(await waitForAdmission(saleId, onProgress, deadline)))
+    }
+
+    if (data && data.status) return data
+    return {
+      status: 'failed',
+      order_id: null,
+      message: `Checkout failed (HTTP ${res.status}).`,
+      strategy: s,
+    }
+  } catch (e) {
+    return { status: 'failed', order_id: null, message: e.message, strategy: s }
   }
 }
 
