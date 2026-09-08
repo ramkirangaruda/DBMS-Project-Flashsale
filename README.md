@@ -360,14 +360,19 @@ config with a flag -- see the note at the top of `app/queue.py`'s
 `IS_SERVERLESS` for why. There is no long-lived process on Vercel, so:
 
 - **Postgres and Redis are external.** Vercel has neither. Point
-  `DATABASE_URL` at a managed Postgres (this was built against
-  [Neon](https://neon.tech) -- its free tier and connection-pooler URL work
-  well for a serverless function) and `REDIS_URL` at a managed Redis with a
-  plain-protocol TLS endpoint (this was built against
+  `DATABASE_URL` at any managed Postgres that hands you a `postgresql://`
+  connection string -- this was built against [Neon](https://neon.tech),
+  but [Supabase](https://supabase.com)'s Postgres works the same way (its
+  connection-pooler URL, on port `6543`, is the one to use for a serverless
+  function rather than the direct `5432` connection -- see Supabase's
+  "Connection pooling" docs for its project). Point `REDIS_URL` at a managed
+  Redis with a plain-protocol TLS endpoint (this was built against
   [Upstash](https://upstash.com), which speaks `rediss://` on top of its REST
-  API). See `app/database.py` and `app/redisconf.py` for exactly how those
-  two variables are consumed -- both fall back to the local docker-compose
-  settings when unset, so nothing about local dev changes.
+  API) -- Supabase itself doesn't offer a Redis service, so this is a
+  separate provider either way. See `app/database.py` and
+  `app/redisconf.py` for exactly how those two variables are consumed --
+  both fall back to the local docker-compose settings when unset, so
+  nothing about local dev changes.
 - **The admission-worker background thread doesn't run.** `app/queue.py`
   ticks the queue inline on the request path instead when `VERCEL=1`
   (Vercel sets this automatically) -- see `_maybe_tick()` there.
