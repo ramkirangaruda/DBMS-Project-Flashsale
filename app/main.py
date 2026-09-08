@@ -8,6 +8,7 @@ Then visit http://localhost:8000/docs for interactive API docs.
 import os
 import random
 import threading
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -36,10 +37,28 @@ from app.ml.demand_forecast import get_forecast_sample
 # the forecast cache.
 IS_SERVERLESS = bool(os.getenv("VERCEL"))
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    Base.metadata.create_all(bind=engine)
+    if not IS_SERVERLESS:
+        # Warm the /demand-forecast cache in the background so the
+        # dashboard's chart doesn't stall a live demo on the first request
+        # (training on the real dataset takes well over a minute). Skipped
+        # on Vercel: get_forecast_sample() just reads forecast_sample.json
+        # there (see app/ml/demand_forecast.IS_SERVERLESS) -- fast enough to
+        # not need warming, and a background thread has no guaranteed future
+        # on a platform with no persistent process to warm anything FOR. See
+        # app/queue.py's matching note on the admission-worker thread.
+        threading.Thread(target=get_forecast_sample, daemon=True).start()
+    yield
+
+
 app = FastAPI(
     title="Flash-Sale Inventory & Oversell Prevention Engine",
     description="DBMS course project -- concurrency control, indexing, recovery, and ML demand/bot detection.",
     version="1.0",
+    lifespan=lifespan,
 )
 
 # CORS so the Vite dev server (and phones on the same LAN) can call this API
@@ -137,22 +156,6 @@ def log_checkout_attempt(user_id, sale_id, order_id, page_load_time, checkout_ti
         log_db.commit()
     finally:
         log_db.close()
-
-
-@app.on_event("startup")
-def startup():
-    Base.metadata.create_all(bind=engine)
-    if IS_SERVERLESS:
-        # get_forecast_sample() just reads forecast_sample.json here (see
-        # app/ml/demand_forecast.IS_SERVERLESS) -- fast enough to not need
-        # warming, and a background thread has no guaranteed future on
-        # Vercel to warm anything FOR anyway. See app/queue.py's matching
-        # note on why the admission worker thread is skipped the same way.
-        return
-    # Warm the /demand-forecast cache in the background so the dashboard's
-    # chart doesn't stall a live demo on the first request (training on the
-    # real dataset takes well over a minute).
-    threading.Thread(target=get_forecast_sample, daemon=True).start()
 
 
 def redis_available(sale_id):
