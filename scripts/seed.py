@@ -91,13 +91,9 @@ def _clear_redis_stock_key():
     Best-effort: Redis being down is not a reason for seeding to fail.
     """
     try:
-        import redis
+        from app.redisconf import make_redis_client
 
-        r = redis.Redis(
-            host=os.getenv("REDIS_HOST", "localhost"),
-            port=int(os.getenv("REDIS_PORT", "6390")),
-            decode_responses=True,
-        )
+        r = make_redis_client()
         r.delete(f"stock:{DEMO_SALE_ID}")
         return True
     except Exception as exc:                                  # noqa: BLE001

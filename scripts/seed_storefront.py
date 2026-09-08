@@ -85,12 +85,8 @@ def clear_redis_keys(sale_ids):
     counter left at 0 by a previous drop would survive this reseed and make
     /checkout/redis report 'sold out' against fresh stock."""
     try:
-        import redis
-        r = redis.Redis(
-            host=os.getenv("REDIS_HOST", "localhost"),
-            port=int(os.getenv("REDIS_PORT", "6390")),
-            decode_responses=True,
-        )
+        from app.redisconf import make_redis_client
+        r = make_redis_client()
         for sid in sale_ids:
             r.delete(f"stock:{sid}")
     except Exception as exc:                                  # noqa: BLE001
