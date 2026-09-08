@@ -36,6 +36,19 @@ r = redis.Redis(
 STOCK_KEY = f"stock:{SALE_ID}"
 
 
+def _release_redis_counter():
+    """Drop the fast-path counter so the sale is not left reading 'sold out'.
+
+    Best-effort: if Redis is already unreachable the demo has finished and
+    printed its result, and failing here would turn a successful run into a
+    traceback over cleanup.
+    """
+    try:
+        r.delete(STOCK_KEY)
+    except Exception:                                          # noqa: BLE001
+        pass
+
+
 def redis_checkout(user_id: str, results: list, index: int):
     # Atomic decrement -- Redis guarantees this is race-free even under
     # massive concurrency, unlike the naive read-then-write in demo_1.
@@ -125,6 +138,16 @@ def run():
     print(f"\nStock available was 1. Confirmed orders: {confirmed} (elapsed {elapsed:.3f}s)")
     print("CORRECT -- exactly 1 confirmed. Notice this was the fastest of the three")
     print("approaches, because most 'sold out' rejections never touched PostgreSQL at all.")
+
+    # Hand the sale back in a consistent state. This demo drains the Redis
+    # counter to 0 but deliberately never touches inventory.reserved_stock
+    # (Redis owns stock on the fast path), so leaving the key behind means
+    # PostgreSQL says "5 available" while GET /sales/{id} -- which reports the
+    # counter that actually governs the next tap -- says "sold out", for good.
+    # Deleting it is what scripts/seed.py does for the same reason, and the
+    # /checkout/redis endpoint re-seeds the key from PostgreSQL (SET NX) the
+    # next time anyone touches this sale.
+    _release_redis_counter()
 
 
 if __name__ == "__main__":

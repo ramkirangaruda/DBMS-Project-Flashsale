@@ -258,6 +258,17 @@ def run():
     print("the next one. Run `python -m scripts.run_bot_scoring` right after this script")
     print("finishes to score that final batch while it's still in the database.")
 
+    # The Redis arm ran last and drained the counter to 0 without touching
+    # inventory.reserved_stock (Redis owns stock on the fast path), so leaving
+    # the key behind strands the canonical sale at "sold out" in GET /sales and
+    # on the storefront even though PostgreSQL still has stock. Dropping it is
+    # what scripts/seed.py does; /checkout/redis re-seeds it from PostgreSQL
+    # (SET NX) on the next request for this sale.
+    try:
+        r.delete(f"stock:{SALE_ID}")
+    except Exception:                                          # noqa: BLE001
+        pass                                                   # cleanup must not fail the run
+
 
 if __name__ == "__main__":
     run()
