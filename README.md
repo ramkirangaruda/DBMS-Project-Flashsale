@@ -21,6 +21,14 @@ app/
                          User.device_fingerprint for exact-match lookups
                          only.
   main.py                FastAPI app (checkout endpoints, sale info, flagged orders)
+  queue.py               virtual waiting room: buyers queue in a Redis ZSET and
+                          are admitted K at a time, so checkout sees a
+                          rate-bounded stream instead of a herd
+  admission.py           the door -- ASGI middleware that refuses any checkout
+                          without a valid X-Admission-Token (see below)
+  idempotency.py         optional Idempotency-Key replay cache for checkout
+  metrics.py             Prometheus counters/histograms scraped at /metrics
+  tracing.py             OpenTelemetry -> Jaeger (OTLP/HTTP on :4318)
   demos/
     demo_1_oversell.py        the lost-update problem, unguarded (Section 8.1)
     demo_2_pessimistic.py     SELECT FOR UPDATE fix (Section 8.2)
@@ -325,10 +333,13 @@ sharing one fingerprint, all hitting checkout from the one shared bot IP
 within the same minute), with a 289ms session. Both orders' `status`
 flipped to `flagged` in the database, and `GET /flagged-orders` returned
 both — confirmed by curling the endpoint directly against a running
-`uvicorn` instance. Checkouts hit directly against `/checkout/pessimistic`,
+`uvicorn` instance. Checkouts hit against `/checkout/pessimistic`,
 `/checkout/optimistic` and `/checkout/redis` (not through the benchmark
 script) were also confirmed to write their own `UserBehaviorLog` rows, so
-both paths into the log table work.
+both paths into the log table work. Those API checkouts now have to come in
+through the waiting room (`/queue/join` → `/queue/status` → checkout with
+`X-Admission-Token`) — see the waiting-room section below; the logging
+behaviour itself is unchanged.
 
 **Read the output honestly, though:** Isolation Forest is unsupervised, so
 "anomalous" means *unusual within this batch in any direction*, not
@@ -443,9 +454,59 @@ trusted Wi-Fi and is why it's documented rather than defaulted on.
 | `/dashboard` | the live metrics dashboard |
 | `/docs` | Swagger |
 | `/api` | JSON endpoint index (moved off `/` so `/` can serve the shop) |
+| `/queue/config` | live admission rate (batch, interval, TTL) |
+| `/metrics` | Prometheus scrape endpoint |
 
 Hidden switches, never shown in the UI: `?strategy=pessimistic|optimistic|redis`
 (defaults to `redis`) and `?admin=1`.
+
+## The virtual waiting room — read this before calling /checkout by hand
+
+**Checkout is not directly callable.** `app/admission.py` is ASGI middleware
+sitting in front of all three `/checkout/*` endpoints: a POST without a valid
+`X-Admission-Token` is refused with **403** before it ever reaches a handler.
+This is the load-shedding door described in `results/queue_notes.md`, and it
+is on by default.
+
+So "Buy Now" is three requests, not one:
+
+```bash
+SALE=22222222-2222-2222-2222-222222222222
+USER=d0000000-0000-4000-8000-000000000000
+
+# 1. take a place in line (Redis only -- never touches PostgreSQL)
+QT=$(curl -s -X POST localhost:8010/queue/join/$SALE | jq -r .queue_token)
+
+# 2. poll until admitted -- returns an admission_token when it's your turn
+AT=$(curl -s "localhost:8010/queue/status/$SALE?token=$QT" | jq -r .admission_token)
+
+# 3. now checkout is reachable
+curl -s -X POST "localhost:8010/checkout/redis?sale_id=$SALE&user_id=$USER" \
+     -H "X-Admission-Token: $AT"
+```
+
+The storefront does this for you — `checkout()` in `frontend/src/api.js` runs
+the whole join → poll → checkout sequence and surfaces your place in line on
+the Buy Now button, so a phone tapping Buy Now still just taps Buy Now.
+
+Default admission rate is **10 buyers per 500ms (20/s)**, with a **30s**
+shopping window per grant; `GET /queue/config` reports the live values and
+`QUEUE_ADMIT_BATCH` / `QUEUE_ADMIT_INTERVAL` / `QUEUE_ADMISSION_TTL` override
+them. `POST /queue/reset/{sale_id}` empties a queue and revokes outstanding
+grants between rounds.
+
+To reopen the pre-queue front door — which is exactly how the raw-vs-queued
+comparison in `results/queue_notes.md` was produced, by flipping one flag on
+the same binary rather than checking out an older commit:
+
+```bash
+ADMISSION_ENFORCED=false python -m app.main
+```
+
+Checkout also honours an optional `Idempotency-Key` header
+(`app/idempotency.py`): send one and a retry with the same key replays the
+cached response instead of placing a second order. Omit it and behaviour is
+unchanged.
 
 ## Running the API
 
@@ -461,6 +522,11 @@ change when you re-seed, so a saved request keeps working:
 sale_id = 22222222-2222-2222-2222-222222222222
 user_id = d0000000-0000-4000-8000-000000000000
 ```
+
+Note that a checkout fired straight from Swagger's "Try it out" will come
+back **403 "Not yet admitted"** — Swagger sends no `X-Admission-Token`. Get
+one from `/queue/join` → `/queue/status` first (both are in Swagger too), or
+start the server with `ADMISSION_ENFORCED=false`.
 
 Each checkout endpoint
 also takes optional `page_load_time`, `checkout_time`, and `ip_address`
