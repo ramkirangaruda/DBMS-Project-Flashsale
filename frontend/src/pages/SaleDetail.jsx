@@ -7,6 +7,7 @@ import {
   useServerCountdown,
 } from '../components/bits.jsx'
 import ResultOverlay from '../components/ResultOverlay.jsx'
+import Header from '../components/Header.jsx'
 
 const POLL_MS = 700
 
@@ -314,17 +315,7 @@ export default function SaleDetail() {
 function Shell({ children }) {
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-30 border-b border-neutral-800 bg-neutral-900">
-        <div className="mx-auto flex h-14 max-w-5xl items-center px-4">
-          <Link to="/" className="text-lg font-black uppercase tracking-tight text-white">
-            Gadget<span className="text-orange-500">Z</span>
-          </Link>
-          <div className="ml-auto flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.12em] text-white/70">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-            Live
-          </div>
-        </div>
-      </header>
+      <Header active="shop" />
       <main className="mx-auto max-w-5xl px-4 py-6 sm:py-10">{children}</main>
     </div>
   )
