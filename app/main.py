@@ -18,9 +18,8 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-import redis
-
 from app.database import get_db, Base, engine, SessionLocal
+from app.redisconf import make_redis_client
 from app import models
 from app.idempotency import install as install_idempotency
 from app.metrics import install as install_metrics
@@ -58,11 +57,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-r = redis.Redis(
-    host=os.getenv("REDIS_HOST", "localhost"),
-    port=int(os.getenv("REDIS_PORT", "6390")),  # matches docker-compose.yml (6390:6379)
-    decode_responses=True,
-)
+r = make_redis_client()
 
 # Optional Idempotency-Key support for /checkout/*. Purely additive: a request
 # without the header behaves exactly as before, and the checkout handlers

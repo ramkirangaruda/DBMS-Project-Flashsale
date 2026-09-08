@@ -269,6 +269,85 @@ def admit(r, sale_id, batch=None):
     return len(popped)
 
 
+async def admit_async(r, sale_id, batch=None):
+    """
+    Same operation as admit(), against the async client, for _maybe_tick()
+    below. Duplicated rather than shared because the two run in genuinely
+    different worlds -- this one runs on the event loop inline with a
+    request, admit() runs on a background thread's own blocking client --
+    and forcing one call signature to serve both would mean either the
+    worker thread doing async-in-a-thread gymnastics or the request path
+    blocking the event loop. Keep them in sync if the admission logic
+    changes.
+    """
+    batch = batch or ADMIT_BATCH
+    zkey = Z_KEY.format(sale_id=sale_id)
+    popped = await r.zpopmin(zkey, batch)
+    if not popped:
+        return 0
+
+    now = time.time()
+    pipe = r.pipeline()
+    tokens_key = TOKENS_KEY.format(sale_id=sale_id)
+    for queue_token, joined_at in popped:
+        admission_token = uuid.uuid4().hex
+        payload = json.dumps({
+            "sale_id": sale_id,
+            "queue_token": queue_token,
+            "admitted_at": now,
+            "waited_s": round(now - float(joined_at), 3),
+        })
+        pipe.set(ADMISSION_KEY.format(token=admission_token), payload, ex=ADMISSION_TTL_S)
+        pipe.set(GRANT_KEY.format(sale_id=sale_id, queue_token=queue_token),
+                 admission_token, ex=ADMISSION_TTL_S)
+        pipe.sadd(tokens_key, admission_token)
+        QUEUE_WAIT.observe(max(0.0, now - float(joined_at)))
+        QUEUE_ADMITS.labels(sale_id=sale_id).inc()
+    pipe.expire(tokens_key, ADMISSION_TTL_S * 4)
+    await pipe.execute()
+
+    return len(popped)
+
+
+# Vercel sets VERCEL=1 in every function's environment. There is no
+# docker-compose here and, more to the point, no long-lived process to host
+# start_admission_worker()'s background thread -- a thread spun up during one
+# invocation's cold start has no guarantee of ever being scheduled again once
+# that invocation returns, since the next request can land in a different
+# execution context entirely.
+IS_SERVERLESS = bool(os.getenv("VERCEL"))
+
+TICK_LOCK_KEY = "queue:tick_lock:{sale_id}"
+
+
+async def _maybe_tick(r, sale_id):
+    """
+    Serverless stand-in for the background admission worker: run one
+    admission tick inline on the request path, at most once per
+    ADMIT_INTERVAL_S per sale.
+
+    The lock is a plain SET NX PX -- of however many buyers hit /queue/join
+    or /queue/status inside the same interval, exactly one of them pays for
+    the tick; everyone else just reads whatever queue state that tick left
+    behind on their own next poll. That's a real trade against the
+    dedicated-thread version: cadence here rides on request arrivals rather
+    than a fixed clock, so it can run a little late if nobody happens to
+    poll for a while. It cannot run early, and it cannot double-admit --
+    ZPOPMIN inside admit_async() is still what makes a slot exclusive, the
+    lock just decides who gets to call it this tick.
+    """
+    if not IS_SERVERLESS:
+        return
+    lock_key = TICK_LOCK_KEY.format(sale_id=sale_id)
+    got_lock = await r.set(lock_key, "1", nx=True, px=int(ADMIT_INTERVAL_S * 1000))
+    if not got_lock:
+        return
+    try:
+        await admit_async(r, sale_id)
+    except Exception:                                          # noqa: BLE001
+        pass                                                   # never fail the caller's request over this
+
+
 async def reset(r, sale_id):
     """Empty a sale's queue and revoke every outstanding admission for it."""
     tokens_key = TOKENS_KEY.format(sale_id=sale_id)
@@ -361,6 +440,12 @@ def start_admission_worker(r, session_factory, interval_s=None):
         return None
     _worker_started = True
 
+    if IS_SERVERLESS:
+        # No persistent process to run a daemon thread on -- see the note on
+        # IS_SERVERLESS above. Admission happens via _maybe_tick() on the
+        # request path instead.
+        return None
+
     interval_s = interval_s or ADMIT_INTERVAL_S
 
     def refresher():
@@ -426,7 +511,9 @@ async def join_queue(sale_id: str):
     """
     if not sale_exists(sale_id):
         raise HTTPException(404, "Sale not found or already ended.")
-    return await join(_aredis, sale_id)
+    result = await join(_aredis, sale_id)
+    await _maybe_tick(_aredis, sale_id)
+    return result
 
 
 @router.get("/status/{sale_id}")
@@ -440,6 +527,7 @@ async def queue_status(sale_id: str, token: str = Query(..., description="queue_
     tightly would rebuild the very stampede the queue exists to prevent --
     just against a different endpoint.
     """
+    await _maybe_tick(_aredis, sale_id)
     return await status(_aredis, sale_id, token)
 
 
@@ -477,6 +565,8 @@ def install(app, redis_client, session_factory):
     global _redis, _aredis
     import redis.asyncio as aioredis
 
+    from app.redisconf import is_tls
+
     _redis = redis_client
     kw = redis_client.connection_pool.connection_kwargs
     _aredis = aioredis.Redis(
@@ -484,6 +574,12 @@ def install(app, redis_client, session_factory):
         port=kw.get("port", 6379),
         db=kw.get("db", 0),
         password=kw.get("password"),
+        # Upstash (the managed Redis behind REDIS_URL on Vercel) only accepts
+        # rediss:// -- plain TCP is refused outright. Mirroring whatever
+        # connection class the sync client above was built with keeps the
+        # async client talking to the same server the same way, instead of
+        # silently downgrading to a scheme Upstash rejects.
+        ssl=is_tls(redis_client),
         decode_responses=True,
         max_connections=256,
     )
