@@ -200,6 +200,30 @@ export async function checkout({ saleId, userId, strategy, onProgress, timeoutMs
  * reseeding. Reachable only if you know the URL (?admin=1) -- see
  * getAdminMode() in lib/demo.js.
  */
+/* ------------------------------------------------------------------ *
+ * Engine Room (pages/EngineRoom.jsx) -- read-only lookups against the
+ * live deployment, so its stats are this system's actual numbers rather
+ * than hardcoded copy.
+ * ------------------------------------------------------------------ */
+
+export async function fetchQueueConfig() {
+  const { res, data } = await request('/queue/config')
+  if (!res.ok) throw new Error(`GET /queue/config failed (${res.status})`)
+  return data
+}
+
+export async function fetchDemandForecast() {
+  const { res, data } = await request('/demand-forecast')
+  if (!res.ok) throw new Error(`GET /demand-forecast failed (${res.status})`)
+  return data
+}
+
+export async function fetchFlaggedOrders() {
+  const { res, data } = await request('/flagged-orders')
+  if (!res.ok) throw new Error(`GET /flagged-orders failed (${res.status})`)
+  return data
+}
+
 export async function resetSale(saleId, stock, token) {
   const qs = new URLSearchParams({ stock: String(stock) })
   if (token) qs.set('token', token)
