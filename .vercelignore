@@ -1,0 +1,24 @@
+# Not needed by either Vercel build (the api/index.py function or the
+# frontend static build) -- local/docker-compose dev only. Keeping these out
+# of the upload keeps the deploy fast and the function bundle small.
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+docs/
+results/
+monitoring/
+
+# The UCI dataset, if you've downloaded it locally -- 23MB, gitignored
+# already, but excluded here too in case it's untracked-but-present.
+data/*.xlsx
+
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# frontend/dist is rebuilt fresh by @vercel/static-build; frontend/node_modules
+# is reinstalled by it too (and is already gitignored, so normally absent).
+frontend/dist/
+frontend/node_modules/

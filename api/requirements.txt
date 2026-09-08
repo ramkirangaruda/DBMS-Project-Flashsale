@@ -1,0 +1,37 @@
+# Trimmed dependency set for the Vercel serverless function -- NOT the same
+# file as the project's root requirements.txt, deliberately. Vercel's Python
+# builder looks for a requirements.txt next to the entrypoint (api/index.py)
+# before falling back to the project root, so this one wins for the deployed
+# function while requirements.txt keeps serving local/docker-compose
+# development, where the full demo suite (ML training, tracing, screenshot
+# capture, the report generator) actually runs.
+#
+# Left out on purpose, and why:
+#   numpy / pandas / scikit-learn   -- app/ml/demand_forecast.py imports these
+#                                       lazily, only on the training path, which
+#                                       is never reached when VERCEL=1 (see that
+#                                       file's IS_SERVERLESS). Real weight for a
+#                                       demo chart that instead serves a
+#                                       committed forecast_sample.json.
+#   opentelemetry-*                 -- app/tracing.py's install() no-ops before
+#                                       importing any of these when
+#                                       OTEL_SDK_DISABLED=true, which is the
+#                                       required setting for this deployment
+#                                       (see the README) -- there's no Jaeger
+#                                       collector on Vercel to export to.
+#   alembic, playwright, Faker, openpyxl, python-docx, httpx
+#                                       -- migrations / screenshot capture /
+#                                          seed-data generation / the xlsx
+#                                          loader / the report builder / test
+#                                          client, none reachable from a live
+#                                          request.
+#   uvicorn                          -- Vercel's Python runtime calls the ASGI
+#                                        app directly; nothing here runs
+#                                        `uvicorn.run()`.
+fastapi==0.141.1
+pydantic==2.13.4
+SQLAlchemy==2.0.51
+psycopg2-binary==2.9.12
+redis==8.1.0
+prometheus_client==0.26.0
+prometheus-fastapi-instrumentator==8.1.0
