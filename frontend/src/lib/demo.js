@@ -74,13 +74,22 @@ export function getAdminToken() {
 
 /** Visual identity for a product category -- gradient + glyph, no photos needed. */
 const CATEGORY_STYLES = {
-  earbuds:   { from: 'from-violet-500', to: 'to-fuchsia-600', glyph: '🎧' },
-  phone:     { from: 'from-sky-500',    to: 'to-blue-700',    glyph: '📱' },
-  watch:     { from: 'from-emerald-500',to: 'to-teal-700',    glyph: '⌚' },
-  joystick:  { from: 'from-orange-500', to: 'to-red-600',     glyph: '🎮' },
-  headphone: { from: 'from-indigo-500', to: 'to-purple-700',  glyph: '🎵' },
-  camera:    { from: 'from-amber-500',  to: 'to-orange-700',  glyph: '📷' },
-  footwear:  { from: 'from-rose-500',   to: 'to-pink-700',    glyph: '👟' },
+  earbuds:    { from: 'from-violet-500',  to: 'to-fuchsia-600', glyph: '🎧' },
+  phone:      { from: 'from-sky-500',     to: 'to-blue-700',    glyph: '📱' },
+  watch:      { from: 'from-emerald-500', to: 'to-teal-700',    glyph: '⌚' },
+  joystick:   { from: 'from-orange-500',  to: 'to-red-600',     glyph: '🎮' },
+  headphone:  { from: 'from-indigo-500',  to: 'to-purple-700',  glyph: '🎵' },
+  camera:     { from: 'from-amber-500',   to: 'to-orange-700',  glyph: '📷' },
+  footwear:   { from: 'from-rose-500',    to: 'to-pink-700',    glyph: '👟' },
+  apparel:    { from: 'from-cyan-500',    to: 'to-sky-700',     glyph: '👕' },
+  backpack:   { from: 'from-lime-500',    to: 'to-green-700',   glyph: '🎒' },
+  sunglasses: { from: 'from-yellow-500',  to: 'to-amber-700',   glyph: '🕶️' },
+  drone:      { from: 'from-slate-500',   to: 'to-neutral-800', glyph: '🛸' },
+  speaker:    { from: 'from-fuchsia-500', to: 'to-purple-800',  glyph: '🔊' },
+  laptop:     { from: 'from-blue-500',    to: 'to-indigo-800',  glyph: '💻' },
+  console:    { from: 'from-red-500',     to: 'to-rose-800',    glyph: '🕹️' },
+  luggage:    { from: 'from-teal-500',    to: 'to-cyan-800',    glyph: '🧳' },
+  keyboard:   { from: 'from-violet-600',  to: 'to-indigo-900',  glyph: '⌨️' },
 }
 const FALLBACK = { from: 'from-neutral-600', to: 'to-neutral-800', glyph: '⚡' }
 

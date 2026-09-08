@@ -46,13 +46,32 @@ def _iid(n): return uuid.UUID(f"1e000000-0000-4000-8000-{n:012d}")
 # (name, display category, base_price, sale_price, stock, starts_in_s, runs_for_s)
 # Index 0 is the headline drop -- scarce stock, biggest discount, and the one
 # whose start time --drop-in controls.
+#
+# A mix of already-live and not-yet-open entries on purpose: the storefront's
+# whole party trick is a synchronized countdown, so a catalogue that is 100%
+# live all the time never shows it off past the very first drop. Roughly a
+# third of these open in the future (30s-20min out) so there is always
+# something for the homepage's hero to count down to, no matter when the page
+# is loaded.
 CATALOGUE = [
-    ("Aurora Wireless Earbuds Pro", "earbuds",   199.00,  49.00,  5,  None, 900),
-    ("Nimbus 5G Smartphone",        "phone",     899.00, 449.00, 12,   -60, 3600),
-    ("Pulse Fitness Watch",         "watch",     249.00,  99.00,  8,  -120, 3600),
-    ("Vortex Pro Controller",       "joystick",  129.00,  59.00, 20,  -180, 3600),
-    ("Halo Studio Headphones",      "headphone", 349.00, 174.00,  6,  -240, 3600),
-    ("Lumen 4K Action Camera",      "camera",    459.00, 229.00, 10,  -300, 3600),
+    ("Aurora Wireless Earbuds Pro",       "earbuds",   199.00,  49.00,  5,  None,  900),
+    ("Nimbus 5G Smartphone",              "phone",     899.00, 449.00, 12,   -60, 3600),
+    ("Pulse Fitness Watch",               "watch",     249.00,  99.00,  8,  -120, 3600),
+    ("Vortex Pro Controller",             "joystick",  129.00,  59.00, 20,  -180, 3600),
+    ("Halo Studio Headphones",            "headphone", 349.00, 174.00,  6,  -240, 3600),
+    ("Lumen 4K Action Camera",            "camera",    459.00, 229.00, 10,  -300, 3600),
+    ("Ember Retro Runner Sneakers",       "footwear",  179.00,  69.00,  7,    45, 1800),
+    ("Glide Air Cushion Trainers",        "footwear",  159.00,  64.00, 15,  -400, 3600),
+    ("Drift Oversized Hoodie",            "apparel",    89.00,  35.00, 25,  -500, 3600),
+    ("Nightshade Graphic Tee 3-Pack",     "apparel",    59.00,  22.00, 30,   120, 1800),
+    ("Basecamp 30L Travel Backpack",      "backpack",  139.00,  55.00, 14,  -600, 3600),
+    ("Solstice Polarized Sunglasses",     "sunglasses", 99.00,  38.00, 18,   240, 1800),
+    ("Skyline Foldable Mini Drone",       "drone",     329.00, 149.00,  4,    20, 1200),
+    ("Boombox Portable Party Speaker",    "speaker",   199.00,  79.00, 16,  -700, 3600),
+    ("Featherweight 14\" Ultrabook",      "laptop",   1299.00, 799.00,  3,   300, 1800),
+    ("Arcadia Handheld Game Console",     "console",   249.00, 129.00,  9,  -800, 3600),
+    ("Odyssey Rolling Carry-On",          "luggage",   219.00,  89.00, 11,   -60, 3600),
+    ("Cascade Mechanical Keyboard",       "keyboard",  159.00,  62.00, 20,  -900, 3600),
 ]
 
 
