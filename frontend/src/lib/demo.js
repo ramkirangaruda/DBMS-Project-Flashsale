@@ -72,17 +72,17 @@ export function getAdminToken() {
   }
 }
 
-/** Visual identity for a product category -- gradient + glyph, no photos needed. */
+/** Visual identity for a product category -- a calm two-tone gradient, no photos needed. */
 const CATEGORY_STYLES = {
-  earbuds:   { from: 'from-violet-500', to: 'to-fuchsia-600', glyph: '🎧' },
-  phone:     { from: 'from-sky-500',    to: 'to-blue-700',    glyph: '📱' },
-  watch:     { from: 'from-emerald-500',to: 'to-teal-700',    glyph: '⌚' },
-  joystick:  { from: 'from-orange-500', to: 'to-red-600',     glyph: '🎮' },
-  headphone: { from: 'from-indigo-500', to: 'to-purple-700',  glyph: '🎵' },
-  camera:    { from: 'from-amber-500',  to: 'to-orange-700',  glyph: '📷' },
-  footwear:  { from: 'from-rose-500',   to: 'to-pink-700',    glyph: '👟' },
+  earbuds:   { from: 'from-violet-500', to: 'to-purple-700' },
+  phone:     { from: 'from-sky-500',    to: 'to-blue-700' },
+  watch:     { from: 'from-emerald-500',to: 'to-teal-700' },
+  joystick:  { from: 'from-orange-500', to: 'to-red-700' },
+  headphone: { from: 'from-indigo-500', to: 'to-violet-700' },
+  camera:    { from: 'from-amber-500',  to: 'to-orange-700' },
+  footwear:  { from: 'from-rose-500',   to: 'to-pink-700' },
 }
-const FALLBACK = { from: 'from-neutral-600', to: 'to-neutral-800', glyph: '⚡' }
+const FALLBACK = { from: 'from-neutral-600', to: 'to-neutral-800' }
 
 export function categoryStyle(category) {
   return CATEGORY_STYLES[(category || '').toLowerCase()] || FALLBACK
