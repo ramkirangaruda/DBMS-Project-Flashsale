@@ -156,6 +156,14 @@ services:
       # Swept by the experiments; see results/horizontal_scaling_notes.md.
       QUEUE_ADMIT_BATCH: ${QUEUE_ADMIT_BATCH:-10}
       ADMISSION_ENFORCED: ${ADMISSION_ENFORCED:-true}
+      # Passed through from the HOST's environment if set, empty otherwise --
+      # app/payments.py already handles an empty key by returning a clear
+      # 503 (see STRIPE_KEY_HELP), so leaving these unset here is safe and
+      # does not need its own default. Without this line the payment step
+      # was previously only reachable against the single host process
+      # (`python -m app.main`), never through the scaled deployment.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8010/api')\""]
       interval: 5s
@@ -188,7 +196,26 @@ services:
     volumes:
       - ./monitoring/nginx.conf:/etc/nginx/nginx.conf:ro
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost/api || exit 1"]
+      # Hits nginx's own /nginx-health location (see monitoring/nginx.conf),
+      # which returns 200 without touching any backend. NOT /api: that
+      # proxies to whichever replica least_conn picks, so a healthcheck
+      # against it answers "is a backend up" rather than "is nginx up".
+      # Backend health is already covered independently by api1/2/3's own
+      # healthchecks above.
+      #
+      # 127.0.0.1, NOT "localhost" -- this is the actual, confirmed root
+      # cause of nginx showing unhealthy for 33+ hours in the scaling
+      # phase while genuinely serving every real request correctly.
+      # /etc/hosts in nginx:1.27-alpine resolves "localhost" to ::1
+      # before 127.0.0.1, busybox wget tries that address and gets it,
+      # and nginx's `listen 80;` only binds IPv4 (confirmed via
+      # `netstat -tln` inside the container: 0.0.0.0:80 only, no :::80)
+      # -- so every healthcheck attempt failed with a genuine connection
+      # refused, verified directly: `wget http://localhost/...` fails,
+      # `wget http://127.0.0.1/...` succeeds, in the same container, back
+      # to back. Not a missing binary (wget is present) and not the
+      # upstream conflation fixed above -- a real IPv6/IPv4 mismatch.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/nginx-health || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 30

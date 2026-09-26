@@ -1,26 +1,27 @@
 import { useEffect } from 'react'
+import { CheckCircle, WarningCircle, XCircle } from '@phosphor-icons/react'
 
 /**
  * Full-screen outcome. Three distinct looks so the result is unmistakable
  * across a room of people holding phones:
- *   confirmed -> green, celebratory
- *   sold_out  -> deep red, "beaten by milliseconds"
- *   failed    -> amber, retryable
+ *   confirmed -> success, calm affirmation
+ *   sold_out  -> danger, "beaten by milliseconds"
+ *   failed    -> accent, retryable
  */
 const LOOKS = {
   confirmed: {
-    bg: 'bg-gradient-to-br from-emerald-500 via-emerald-600 to-teal-700',
-    glyph: '🎉',
-    title: 'You got it!',
+    tone: 'bg-success text-success-ink',
+    icon: CheckCircle,
+    title: 'You got it',
   },
   sold_out: {
-    bg: 'bg-gradient-to-br from-rose-600 via-red-700 to-neutral-900',
-    glyph: '😢',
+    tone: 'bg-danger text-danger-ink',
+    icon: XCircle,
     title: 'Sold out',
   },
   failed: {
-    bg: 'bg-gradient-to-br from-amber-500 via-orange-600 to-red-700',
-    glyph: '⚠️',
+    tone: 'bg-accent text-accent-ink',
+    icon: WarningCircle,
     title: 'Checkout failed',
   },
 }
@@ -38,30 +39,33 @@ export default function ResultOverlay({ result, onClose, onRetry }) {
 
   if (!result) return null
   const look = LOOKS[result.status] || LOOKS.failed
+  const Icon = look.icon
   const shortId = result.order_id ? result.order_id.slice(0, 8).toUpperCase() : null
 
   return (
     <div
-      className={`fixed inset-0 z-50 flex items-center justify-center px-6 text-white ${look.bg}`}
+      className={`fixed inset-0 z-50 flex items-center justify-center px-6 ${look.tone}`}
       role="alertdialog"
       aria-modal="true"
       aria-label={look.title}
     >
-      <div className="w-full max-w-md text-center">
-        <div className="animate-pop text-7xl sm:text-8xl">{look.glyph}</div>
+      <div className="w-full max-w-sm text-center">
+        <div className="animate-pop mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-white/15">
+          <Icon weight="bold" size={40} />
+        </div>
 
-        <h2 className="animate-slide-up mt-6 text-4xl font-black tracking-tight sm:text-5xl">
+        <h2 className="animate-slide-up mt-6 text-4xl font-semibold tracking-tight sm:text-5xl">
           {look.title}
         </h2>
 
-        <p className="animate-slide-up mt-3 text-base text-white/85 sm:text-lg">{result.message}</p>
+        <p className="animate-slide-up mt-3 text-base opacity-85 sm:text-lg">{result.message}</p>
 
         {shortId && (
-          <div className="animate-slide-up mt-7 inline-block rounded-xl bg-black/25 px-5 py-3 backdrop-blur">
-            <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/60">
+          <div className="animate-slide-up mt-7 inline-block rounded-2xl bg-black/15 px-5 py-3 backdrop-blur">
+            <div className="text-[11px] font-medium uppercase tracking-[0.1em] opacity-70">
               Order
             </div>
-            <div className="tabular mt-0.5 font-mono text-xl font-bold">#{shortId}</div>
+            <div className="tabular mt-0.5 font-mono text-xl font-semibold">#{shortId}</div>
           </div>
         )}
 
@@ -69,14 +73,14 @@ export default function ResultOverlay({ result, onClose, onRetry }) {
           {result.status !== 'confirmed' && onRetry && (
             <button
               onClick={onRetry}
-              className="rounded-xl bg-white px-6 py-3 text-sm font-black uppercase tracking-wider text-neutral-900 transition hover:bg-white/90 active:scale-95"
+              className="rounded-full bg-white px-6 py-3 text-sm font-semibold text-neutral-900 transition hover:bg-white/90 active:scale-95"
             >
               Try again
             </button>
           )}
           <button
             onClick={onClose}
-            className="rounded-xl border-2 border-white/45 px-6 py-3 text-sm font-black uppercase tracking-wider text-white transition hover:bg-white/10 active:scale-95"
+            className="rounded-full border border-white/40 px-6 py-3 text-sm font-semibold transition hover:bg-white/10 active:scale-95"
           >
             {result.status === 'confirmed' ? 'Keep shopping' : 'Back to sale'}
           </button>
@@ -85,7 +89,7 @@ export default function ResultOverlay({ result, onClose, onRetry }) {
         {/* Which concurrency strategy served this. Tiny and unobtrusive --
             useful when demoing, invisible to anyone not looking for it. */}
         {result.strategy && (
-          <div className="mt-8 text-[10px] uppercase tracking-[0.16em] text-white/40">
+          <div className="mt-8 text-[11px] uppercase tracking-[0.1em] opacity-40">
             {result.strategy} strategy
           </div>
         )}

@@ -2,16 +2,67 @@
 @tailwind components;
 @tailwind utilities;
 
+/**
+ * Design tokens.
+ *
+ * One accent (GadgetZ warm orange) shared with the ops dashboard
+ * (app/static/dashboard.html) so the storefront and the internal tooling
+ * read as the same product. The accent is reserved for real urgency
+ * signals (discount, low stock, live status) -- everything else in the
+ * UI runs on neutrals.
+ */
 @layer base {
+  :root {
+    color-scheme: light;
+    --page: #f7f7f5;
+    --surface: #ffffff;
+    --surface-2: #f0efea;
+    --ink: #0b0b0a;
+    --ink-2: #55534c;
+    --muted: #8b8a84;
+    --hairline: #e6e4de;
+
+    --accent: #eb6834;
+    --accent-ink: #ffffff;
+    --danger: #d03b3b;
+    --danger-ink: #ffffff;
+    --success: #0ca30c;
+    --success-ink: #ffffff;
+
+    --shadow-color: 11 11 10;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page: #0d0d0c;
+      --surface: #151412;
+      --surface-2: #1c1b18;
+      --ink: #f5f4f1;
+      --ink-2: #c3c2b7;
+      --muted: #8b8a84;
+      --hairline: #2a2a27;
+
+      --accent: #f07f4f;
+      --accent-ink: #0d0d0c;
+      --danger: #e5615f;
+      --danger-ink: #1a0a0a;
+      --success: #3fc23f;
+      --success-ink: #06210a;
+
+      --shadow-color: 0 0 0;
+    }
+  }
+
   html {
     -webkit-text-size-adjust: 100%;
   }
   body {
-    @apply bg-neutral-50 text-neutral-900 antialiased;
+    @apply bg-page text-ink antialiased;
     /* Stop iOS double-tap zoom from eating rapid Buy Now taps during a drop. */
     touch-action: manipulation;
   }
-  /* Countdown / stock digits must not jitter as they tick. */
+  /* Countdown / stock / price digits must not jitter as they tick. */
   .tabular {
     font-variant-numeric: tabular-nums;
   }

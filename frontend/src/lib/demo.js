@@ -128,7 +128,7 @@ const CATEGORY_STYLES = {
   luggage:    { from: 'from-teal-500',    to: 'to-cyan-800',    glyph: '🧳' },
   keyboard:   { from: 'from-violet-600',  to: 'to-indigo-900',  glyph: '⌨️' },
 }
-const FALLBACK = { from: 'from-neutral-600', to: 'to-neutral-800', glyph: '⚡' }
+const FALLBACK = { from: 'from-neutral-600', to: 'to-neutral-800' }
 
 export function categoryStyle(category) {
   return CATEGORY_STYLES[(category || '').toLowerCase()] || FALLBACK
