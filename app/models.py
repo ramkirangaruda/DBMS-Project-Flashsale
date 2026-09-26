@@ -3,14 +3,22 @@ SQLAlchemy models for the Flash-Sale Inventory & Oversell Prevention Engine.
 
 Maps directly to Section 4 (ER Model) and Section 5 (Normalization) of the
 design document: User, Product, FlashSaleEvent, Inventory, Order, OrderItem,
-UserBehaviorLog, FlaggedOrder, StockAuditLog.
+UserBehaviorLog, FlaggedOrder, StockAuditLog, Payment.
+
+`Payment` and `Order.strategy` were added after the original design (see
+their docstrings for why) -- both are additive: no existing table lost a
+column, and `Base.metadata.create_all()` alone cannot add a column to a
+table that already exists (it only creates missing tables), which is why
+`Order.strategy` needs the small idempotent ALTER in app/migrate.py rather
+than showing up automatically the way `Payment` does.
 """
 import enum
 import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Column, String, Integer, Numeric, DateTime, ForeignKey, Enum, Text, Index
+    Column, String, Integer, Numeric, DateTime, ForeignKey, Enum, Text, Index,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -110,11 +118,25 @@ class Order(Base):
     sale_id = Column(UUID(as_uuid=True), ForeignKey("flash_sale_events.id"), nullable=False)
     status = Column(Enum(OrderStatus), default=OrderStatus.pending, nullable=False)
     created_at = Column(DateTime(timezone=True), default=now_utc)
+    # Which /checkout/* handler wrote this row -- 'pessimistic' | 'optimistic'
+    # | 'redis'. NULL on any order written before this column existed.
+    #
+    # Added specifically so a declined payment can be reconciled back to the
+    # right stock counter (app/payments.py). The three checkout strategies
+    # do not all track "how many units are left" in the same place --
+    # pessimistic/optimistic decrement inventory.reserved_stock under a lock
+    # or a version check; redis decrements a Redis counter and deliberately
+    # never touches reserved_stock at all (see the CAP-tradeoff note on
+    # /checkout/redis). Releasing a unit on decline means writing back to
+    # whichever counter originally reserved it, and there is no way to know
+    # which one that was without recording it at the moment of reservation.
+    strategy = Column(String(20), nullable=True)
 
     user = relationship("User", back_populates="orders")
     sale = relationship("FlashSaleEvent", back_populates="orders")
     items = relationship("OrderItem", back_populates="order")
     flag = relationship("FlaggedOrder", back_populates="order", uselist=False)
+    payments = relationship("Payment", back_populates="order")
 
     __table_args__ = (
         # Composite B+ tree index -- "all orders for this sale in the last
@@ -189,7 +211,13 @@ class FlaggedOrder(Base):
 
 
 class StockAuditLog(Base):
-    """Simplified write-ahead log used by the recovery demo -- Section 7."""
+    """Simplified write-ahead log used by the recovery demo -- Section 7.
+
+    Also the write target when a declined payment releases a reserved unit
+    (app/payments.py) -- `operation = 'payment_declined_release'` rows are
+    written there rather than to a new table, since this table already
+    exists to record exactly this shape of fact: a before/after stock
+    value and whether the change committed."""
     __tablename__ = "stock_audit_log"
 
     id = uuid_pk()
@@ -199,3 +227,84 @@ class StockAuditLog(Base):
     after_value = Column(Integer)
     timestamp = Column(DateTime(timezone=True), default=now_utc)
     committed = Column(String(10), default="false")  # "true"/"false" -- drives redo/undo demo
+
+
+class Payment(Base):
+    """
+    Durable record of a Stripe payment attempt against a confirmed order.
+
+    WHY THIS TABLE EXISTS -- REPLACING A REDIS-ONLY DESIGN, NOT EXTENDING IT
+        The first version of this feature stored payment state entirely in
+        Redis (`payment:{order_id}`, TTL'd). That was a deliberate scoping
+        choice for that phase ("no Postgres schema changes"), but it created
+        a real gap: there was no durable record anywhere that money had
+        changed hands. If Redis evicted the key under memory pressure, or
+        the 7-day TTL simply elapsed, the fact that an order was paid,
+        declined, or refunded became unrecoverable -- while `orders`,
+        `inventory`, and `stock_audit_log` are all durable for exactly this
+        reason. Every other piece of state this system treats as a fact
+        lives in Postgres; payment status is at least as important a fact
+        as any of them, so it belongs here too.
+
+    ATTEMPTS, NOT ONE ROW PER ORDER
+        `(order_id, attempt)` is unique, not `order_id` alone. This is what
+        makes the idempotency-key fix possible: the Stripe idempotency key
+        for a /payment/create call is `flashsale-order-{order_id}-attempt-
+        {attempt}-payment-create`. Ten SIMULTANEOUS calls for the same order
+        compute the same next `attempt` number (see app/payments.py's
+        `_next_attempt()`) and so share one key -- Stripe's own idempotency
+        layer collapses them into one PaymentIntent, exactly as before. A
+        RETRY AFTER A GENUINE DECLINE, arriving any time later, computes the
+        NEXT attempt number and gets a fresh key, so it reaches the card
+        network again instead of Stripe replaying a 24h-old cached decline
+        forever -- the exact limitation the Redis-only version named and
+        left unfixed.
+
+    SAFE UNDER CONCURRENT WRITERS, SAME REASONING AS THE REDIS VERSION
+        Both the synchronous create/confirm code path and the webhook
+        handler UPSERT into this table (`INSERT ... ON CONFLICT (order_id,
+        attempt) DO UPDATE ...`). That is safe for the same reason the old
+        Redis read-modify-write was safe: every writer is reporting the same
+        underlying Stripe truth for the same PaymentIntent, never
+        maintaining independent state that could conflict.
+    """
+    __tablename__ = "payments"
+
+    id = uuid_pk()
+    order_id = Column(UUID(as_uuid=True), ForeignKey("orders.id"), nullable=False)
+    attempt = Column(Integer, nullable=False, default=1)
+    stripe_payment_intent_id = Column(String(255))
+    # Holds BOTH the raw Stripe status written synchronously right after
+    # create/confirm (e.g. "requires_payment_method") and the two normalized
+    # terminal states -- "succeeded" / "failed" -- that ONLY the webhook
+    # handler ever writes. See app/payments.py for why that split is what
+    # makes the webhook-driven transition demonstrable at all.
+    status = Column(String(40), nullable=False, default="processing")
+    amount_cents = Column(Integer, nullable=False)
+    currency = Column(String(10), nullable=False, default="usd")
+    payment_method = Column(String(64))
+    decline_code = Column(String(64))
+    failure_message = Column(Text)
+    # "create_confirm_sync" (this process, synchronously) or
+    # "webhook:{event_type}" (the async Stripe callback). Distinguishes an
+    # immediate best-effort status from an authoritative one -- see the
+    # `status` column's note above.
+    last_event = Column(String(64))
+    last_webhook_event_id = Column(String(255))
+    # Set the instant the webhook-driven decline handler releases the
+    # reserved unit back to inventory, so a re-delivered webhook for the
+    # SAME failure (Stripe does not guarantee exactly-once delivery) can be
+    # told "already reconciled" and skip the release rather than doing it
+    # twice. NULL until that happens; never reset afterward.
+    stock_released_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=now_utc)
+    updated_at = Column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+    order = relationship("Order", back_populates="payments")
+
+    __table_args__ = (
+        UniqueConstraint("order_id", "attempt", name="uq_payments_order_attempt"),
+        # "Give me the latest attempt for this order" is the query every
+        # /payment/create and /payment/status call makes first.
+        Index("ix_payments_order_id", "order_id"),
+    )

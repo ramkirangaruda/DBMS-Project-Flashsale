@@ -25,14 +25,16 @@ export function useServerCountdown(targetIso) {
   return remaining
 }
 
-export function FlashBadge({ children = 'Flash Sale', className = '' }) {
+/* ---------------- badges & pills ---------------- */
+
+export function FlashBadge({ children = 'Flash sale', className = '' }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded bg-red-600 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.12em] text-white ${className}`}
+      className={`inline-flex items-center gap-1.5 rounded-full bg-ink px-2.5 py-1 text-[11px] font-semibold text-page ${className}`}
     >
       <span className="relative flex h-1.5 w-1.5">
-        <span className="absolute inline-flex h-full w-full animate-pulse-ring rounded-full bg-white" />
-        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-white" />
+        <span className="absolute inline-flex h-full w-full animate-pulse-ring rounded-full bg-accent" />
+        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-accent" />
       </span>
       {children}
     </span>
@@ -42,30 +44,38 @@ export function FlashBadge({ children = 'Flash Sale', className = '' }) {
 export function DiscountBadge({ pct }) {
   if (!pct || pct <= 0) return null
   return (
-    <span className="rounded bg-neutral-900 px-2 py-1 text-[10px] font-black uppercase tracking-[0.1em] text-white">
-      -{pct}%
+    <span className="rounded-full bg-accent px-2.5 py-1 text-[11px] font-semibold text-accent-ink">
+      {pct}% off
     </span>
   )
 }
 
-/** Countdown pill. Turns red + urgent under a minute. */
+/** Countdown pill. Shifts to the accent, then to danger, as time runs out. */
 export function CountdownPill({ ms, label, className = '' }) {
+  const critical = ms > 0 && ms < 15_000
   const urgent = ms > 0 && ms < 60_000
+
+  const tone = critical
+    ? 'bg-danger text-danger-ink'
+    : urgent
+      ? 'bg-accent text-accent-ink'
+      : 'bg-surface-2 text-ink'
+
   return (
     <span
-      className={`inline-flex items-baseline gap-2 rounded-lg px-3 py-1.5 tabular ${
-        urgent ? 'bg-red-600 text-white' : 'bg-neutral-900/85 text-white'
-      } ${className}`}
+      className={`tabular inline-flex items-baseline gap-2 rounded-full px-3 py-1.5 text-sm ${tone} ${className}`}
     >
       {label && (
-        <span className="text-[10px] font-bold uppercase tracking-[0.12em] opacity-75">{label}</span>
+        <span className="text-[11px] font-medium opacity-70">{label}</span>
       )}
-      <span className={`font-black ${urgent ? 'animate-pulse' : ''}`}>{formatDuration(ms)}</span>
+      <span className={`font-semibold ${critical ? 'animate-pulse' : ''}`}>
+        {formatDuration(ms)}
+      </span>
     </span>
   )
 }
 
-/** Stock progress bar — fills red as the item runs out. */
+/** Stock progress bar. Fills with the accent as stock runs low. */
 export function StockBar({ available, total, className = '' }) {
   const pct = total > 0 ? Math.max(0, Math.min(100, (available / total) * 100)) : 0
   const low = pct <= 34
@@ -73,17 +83,17 @@ export function StockBar({ available, total, className = '' }) {
   return (
     <div className={className}>
       <div className="mb-1.5 flex items-baseline justify-between">
-        <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">
-          {gone ? 'Sold out' : `Only ${available} left`}
+        <span className="text-xs font-medium text-ink-2">
+          {gone ? 'Sold out' : `${available} left`}
         </span>
-        <span className="tabular text-xs text-neutral-400">
+        <span className="tabular text-xs text-muted">
           {available}/{total}
         </span>
       </div>
-      <div className="h-2 overflow-hidden rounded-full bg-neutral-200">
+      <div className="h-1.5 overflow-hidden rounded-full bg-surface-2">
         <div
           className={`h-full rounded-full transition-[width] duration-500 ease-out ${
-            gone ? 'bg-neutral-400' : low ? 'bg-red-600' : 'bg-neutral-900'
+            gone ? 'bg-muted' : low ? 'bg-danger' : 'bg-ink'
           }`}
           style={{ width: `${pct}%` }}
         />
@@ -130,8 +140,10 @@ export function ProductArt({ category, className = '', glyphClass = 'text-6xl' }
     <div
       className={`relative flex items-center justify-center overflow-hidden bg-gradient-to-br ${from} ${to} ${className}`}
     >
-      <div className="absolute inset-0 opacity-25 [background:radial-gradient(circle_at_30%_20%,white,transparent_55%)]" />
-      <span className={`relative drop-shadow-lg ${glyphClass}`}>{glyph}</span>
+      <div className="absolute inset-0 opacity-20 [background:radial-gradient(circle_at_28%_20%,white,transparent_55%)]" />
+      <span className={`relative ${glyphClass}`} aria-hidden>
+        {glyph}
+      </span>
     </div>
   )
 }
@@ -183,9 +195,11 @@ export function PriceRow({ base, sale, size = 'md' }) {
   const big = size === 'lg'
   return (
     <div className="flex items-baseline gap-2">
-      <span className={`font-black tracking-tight ${big ? 'text-3xl' : 'text-xl'}`}>{money(sale)}</span>
+      <span className={`tabular font-semibold tracking-tight ${big ? 'text-3xl' : 'text-lg'}`}>
+        {money(sale)}
+      </span>
       {base > sale && (
-        <span className={`text-neutral-400 line-through ${big ? 'text-lg' : 'text-sm'}`}>
+        <span className={`tabular text-muted line-through ${big ? 'text-base' : 'text-sm'}`}>
           {money(base)}
         </span>
       )}

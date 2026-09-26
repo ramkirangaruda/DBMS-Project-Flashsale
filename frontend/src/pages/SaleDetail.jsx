@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import { ArrowLeft, WarningCircle } from '@phosphor-icons/react'
 import { checkout, fetchSale, resetSale, serverNow } from '../api.js'
 import { getAdminMode, getAdminToken, getDemoUserId, getStrategy, money, seededRating } from '../lib/demo.js'
 import {
@@ -11,24 +12,24 @@ import Header from '../components/Header.jsx'
 
 const POLL_MS = 700
 
-/** Big "3 · 2 · 1" pre-drop screen, driven entirely by the server clock. */
+/** Big "3 . 2 . 1" pre-drop screen, driven entirely by the server clock. */
 function DropCountdown({ ms }) {
   const secs = Math.ceil(ms / 1000)
   const finalTen = secs <= 10
   return (
-    <div className="rounded-2xl bg-gradient-to-br from-neutral-900 via-neutral-900 to-black p-8 text-center text-white">
-      <div className="text-[11px] font-black uppercase tracking-[0.2em] text-orange-400">
+    <div className="rounded-2xl bg-ink p-8 text-center text-page">
+      <div className="text-xs font-medium uppercase tracking-[0.14em] text-accent">
         Drop opens in
       </div>
       <div
         key={secs}
-        className={`tabular animate-pop mt-3 font-black leading-none ${
-          finalTen ? 'text-8xl text-red-500 sm:text-9xl' : 'text-7xl sm:text-8xl'
+        className={`tabular animate-pop mt-3 font-semibold leading-none ${
+          finalTen ? 'text-8xl text-accent sm:text-9xl' : 'text-6xl sm:text-7xl'
         }`}
       >
         {finalTen ? secs : new Date(ms).toISOString().substr(14, 5)}
       </div>
-      <p className="mt-4 text-sm text-white/60">
+      <p className="mt-4 text-sm text-page/60">
         Buy Now unlocks for everyone at the same instant.
       </p>
     </div>
@@ -117,10 +118,10 @@ export default function SaleDetail() {
   if (error) {
     return (
       <Shell>
-        <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-center">
-          <div className="text-3xl">⚠️</div>
-          <h2 className="mt-2 font-bold text-red-800">{error}</h2>
-          <Link to="/" className="mt-3 inline-block text-sm font-bold text-red-700 underline">
+        <div className="rounded-2xl border border-danger/25 bg-danger/5 p-8 text-center">
+          <WarningCircle weight="light" size={36} className="mx-auto text-danger" />
+          <h2 className="mt-3 font-semibold text-danger">{error}</h2>
+          <Link to="/" className="mt-3 inline-block text-sm font-medium text-danger underline underline-offset-2">
             Back to all sales
           </Link>
         </div>
@@ -131,7 +132,7 @@ export default function SaleDetail() {
   if (!sale) {
     return (
       <Shell>
-        <div className="h-72 animate-pulse rounded-2xl bg-neutral-200" />
+        <div className="h-72 animate-pulse rounded-2xl bg-surface-2" />
       </Shell>
     )
   }
@@ -150,13 +151,13 @@ export default function SaleDetail() {
 
   return (
     <Shell>
-      <div className="grid gap-7 lg:grid-cols-2">
+      <div className="grid gap-8 lg:grid-cols-2">
         {/* ---------------- product art ---------------- */}
-        <div className="relative overflow-hidden rounded-2xl">
+        <div className="relative overflow-hidden rounded-[28px]">
           <ProductArt
             category={sale.category}
-            className="h-72 w-full sm:h-[420px]"
-            glyphClass="text-[8rem]"
+            className="h-72 w-full sm:h-[440px]"
+            glyphClass="text-[7.5rem] opacity-90"
           />
           <div className="absolute left-4 top-4 flex gap-2">
             <FlashBadge>{notStarted ? 'Drop incoming' : 'Flash sale'}</FlashBadge>
@@ -165,12 +166,12 @@ export default function SaleDetail() {
         </div>
 
         {/* ---------------- buy panel ---------------- */}
-        <div className="flex flex-col gap-5">
+        <div className="flex flex-col gap-6">
           <div>
-            <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-neutral-400">
+            <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted">
               {sale.category || 'gadget'}
             </div>
-            <h1 className="mt-1.5 text-3xl font-black leading-tight tracking-tight sm:text-4xl">
+            <h1 className="mt-1.5 text-3xl font-semibold leading-tight tracking-tight text-ink sm:text-4xl">
               {sale.product}
             </h1>
             <StarRating {...seededRating(sale.sale_id)} className="mt-2" />
@@ -179,7 +180,7 @@ export default function SaleDetail() {
           <div className="flex flex-wrap items-center gap-3">
             <PriceRow base={sale.base_price} sale={sale.sale_price} size="lg" />
             {sale.discount_pct > 0 && (
-              <span className="rounded bg-red-50 px-2 py-1 text-xs font-black text-red-600">
+              <span className="rounded-full bg-accent/10 px-2.5 py-1 text-xs font-semibold text-accent">
                 Save {money(sale.base_price - sale.sale_price)}
               </span>
             )}
@@ -200,29 +201,29 @@ export default function SaleDetail() {
           {notStarted ? (
             <DropCountdown ms={untilStart} />
           ) : (
-            <div className="rounded-2xl border border-neutral-200 bg-white p-5">
+            <div className="rounded-2xl border border-hairline bg-surface p-5">
               <div className="mb-4 flex items-center justify-between">
-                <span className="text-[11px] font-black uppercase tracking-[0.14em] text-neutral-400">
+                <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted">
                   Live stock
                 </span>
                 <CountdownPill ms={untilEnd} label="Ends in" />
               </div>
 
               <div
-                className={`tabular text-5xl font-black tracking-tight transition-colors duration-200 ${
-                  flash ? 'text-red-600' : soldOut ? 'text-neutral-300' : 'text-neutral-900'
+                className={`tabular text-5xl font-semibold tracking-tight transition-colors duration-200 ${
+                  flash ? 'text-accent' : soldOut ? 'text-muted' : 'text-ink'
                 }`}
               >
                 {sale.available}
-                <span className="ml-2 text-lg font-bold text-neutral-400">
+                <span className="ml-2 text-lg font-medium text-muted">
                   / {sale.total_stock} left
                 </span>
               </div>
 
               <StockBar available={sale.available} total={sale.total_stock} className="mt-4" />
 
-              <p className="mt-3 text-xs text-neutral-400">
-                Updating live every {POLL_MS}ms — watch it drop as others buy.
+              <p className="mt-3 text-xs text-muted">
+                Updating live every {POLL_MS}ms. Watch it drop as others buy.
               </p>
             </div>
           )}
@@ -230,10 +231,10 @@ export default function SaleDetail() {
           <button
             onClick={buy}
             disabled={!canBuy}
-            className={`w-full rounded-2xl px-6 py-5 text-lg font-black uppercase tracking-wider transition active:scale-[.98] ${
+            className={`w-full rounded-full px-6 py-4 text-base font-semibold transition active:scale-[.98] ${
               canBuy
-                ? 'bg-red-600 text-white shadow-lg shadow-red-600/25 hover:bg-red-700'
-                : 'cursor-not-allowed bg-neutral-200 text-neutral-400'
+                ? 'bg-ink text-page hover:opacity-90'
+                : 'cursor-not-allowed bg-surface-2 text-muted'
             }`}
           >
             {label}
@@ -258,26 +259,26 @@ export default function SaleDetail() {
           )}
 
           {notStarted && (
-            <p className="-mt-2 text-center text-xs text-neutral-400">
-              Synchronized to the server clock — every device unlocks together.
+            <p className="-mt-3 text-center text-xs text-muted">
+              Synchronized to the server clock. Every device unlocks together.
             </p>
           )}
 
           {/* Hidden admin strip -- only rendered with ?admin=1 */}
           {adminRef.current && (
-            <div className="rounded-xl border border-dashed border-neutral-300 bg-neutral-50 p-3">
-              <div className="mb-2 text-[10px] font-black uppercase tracking-[0.14em] text-neutral-400">
-                Admin · reset stock
+            <div className="rounded-2xl border border-dashed border-hairline bg-surface-2 p-3.5">
+              <div className="mb-2.5 text-[11px] font-medium uppercase tracking-[0.08em] text-muted">
+                Admin: reset stock
               </div>
               <div className="flex items-center gap-2">
                 {[1, 3, 5].map((n) => (
                   <button
                     key={n}
                     onClick={() => setResetStock(n)}
-                    className={`h-9 w-9 rounded-lg text-sm font-black transition ${
+                    className={`h-9 w-9 rounded-full text-sm font-semibold transition ${
                       resetStock === n
-                        ? 'bg-neutral-900 text-white'
-                        : 'bg-white text-neutral-500 ring-1 ring-neutral-200'
+                        ? 'bg-ink text-page'
+                        : 'bg-surface text-ink-2 ring-1 ring-inset ring-hairline'
                     }`}
                   >
                     {n}
@@ -296,9 +297,9 @@ export default function SaleDetail() {
                       setResetting(false)
                     }
                   }}
-                  className="ml-auto rounded-lg bg-neutral-900 px-4 py-2 text-xs font-black uppercase tracking-wider text-white transition hover:bg-neutral-700 disabled:opacity-50"
+                  className="ml-auto rounded-full bg-ink px-4 py-2 text-xs font-semibold text-page transition hover:opacity-90 disabled:opacity-50"
                 >
-                  {resetting ? 'Resetting…' : `Reset to ${resetStock}`}
+                  {resetting ? 'Resetting...' : `Reset to ${resetStock}`}
                 </button>
               </div>
             </div>
@@ -306,9 +307,10 @@ export default function SaleDetail() {
 
           <Link
             to="/"
-            className="text-center text-xs font-bold uppercase tracking-widest text-neutral-400 hover:text-neutral-900"
+            className="inline-flex items-center justify-center gap-1.5 text-sm font-medium text-muted transition hover:text-ink"
           >
-            ← All flash sales
+            <ArrowLeft weight="bold" size={14} />
+            All flash sales
           </Link>
         </div>
       </div>

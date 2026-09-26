@@ -23,10 +23,12 @@ from sqlalchemy import text
 from app.database import get_db, Base, engine, SessionLocal
 from app.redisconf import make_redis_client
 from app import models
+from app import migrate
 from app.idempotency import install as install_idempotency
 from app.metrics import install as install_metrics
 from app.queue import install as install_queue
 from app.admission import install as install_admission
+from app.payments import install as install_payments
 from app.tracing import install as install_tracing
 from app.ml.demand_forecast import get_forecast_sample
 
@@ -42,6 +44,12 @@ IS_SERVERLESS = bool(os.getenv("VERCEL"))
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
+    # create_all() above only creates tables that don't exist yet -- it
+    # never alters an existing one, so orders.strategy (added for
+    # app/payments.py's stock reconciliation) needs its own one-line,
+    # idempotent ALTER. See app/migrate.py for why this isn't a real
+    # Alembic migration.
+    migrate.run(engine)
     if not IS_SERVERLESS:
         # Warm the /demand-forecast cache in the background so the
         # dashboard's chart doesn't stall a live demo on the first request
@@ -111,6 +119,13 @@ install_queue(app, r, SessionLocal)
 # middleware can cache a 403 under their key for 24 hours. See the stack note
 # in app/admission.py. The checkout handlers themselves are untouched.
 install_admission(app, r)
+
+# Stripe test-mode payment step, layered on top of an already-confirmed
+# order. New router only -- no middleware, so where this line sits relative
+# to idempotency/admission/metrics does not matter the way it does for
+# them. Money never touches Postgres: payment state lives in Redis only,
+# the same pattern as idempotency.py and queue.py. See app/payments.py.
+install_payments(app, r)
 
 # OpenTelemetry tracing, exported to Jaeger. Registered LAST so its middleware
 # is the outermost one: the server span then covers the whole exchange,
@@ -355,8 +370,13 @@ def checkout_pessimistic(
         db.execute(text("UPDATE inventory SET reserved_stock = reserved_stock + 1 WHERE id = :id"), {"id": inv_id})
         order_id = db.execute(
             text(
-                "INSERT INTO orders (id, user_id, sale_id, status, created_at) "
-                "VALUES (gen_random_uuid(), :uid, :sid, 'confirmed', now()) RETURNING id"
+                # `strategy` recorded here, added so app/payments.py can
+                # release the right counter if a payment is later declined
+                # -- see Order.strategy's docstring in app/models.py. Pure
+                # bookkeeping: the lock, the UPDATE above, and everything
+                # else in this function is exactly what it was.
+                "INSERT INTO orders (id, user_id, sale_id, status, strategy, created_at) "
+                "VALUES (gen_random_uuid(), :uid, :sid, 'confirmed', 'pessimistic', now()) RETURNING id"
             ),
             {"uid": user_id, "sid": sale_id},
         ).fetchone()[0]
@@ -398,8 +418,11 @@ def checkout_optimistic(
                                    strategy="optimistic", http_status=409)
         order_id = db.execute(
             text(
-                "INSERT INTO orders (id, user_id, sale_id, status, created_at) "
-                "VALUES (gen_random_uuid(), :uid, :sid, 'confirmed', now()) RETURNING id"
+                # See the pessimistic handler's identical note -- `strategy`
+                # is bookkeeping for app/payments.py's stock reconciliation,
+                # not a change to this function's own OCC logic.
+                "INSERT INTO orders (id, user_id, sale_id, status, strategy, created_at) "
+                "VALUES (gen_random_uuid(), :uid, :sid, 'confirmed', 'optimistic', now()) RETURNING id"
             ),
             {"uid": user_id, "sid": sale_id},
         ).fetchone()[0]
@@ -462,8 +485,14 @@ def checkout_redis(
         try:
             order_id = db.execute(
                 text(
-                    "INSERT INTO orders (id, user_id, sale_id, status, created_at) "
-                    "VALUES (gen_random_uuid(), :uid, :sid, 'confirmed', now()) RETURNING id"
+                    # See the pessimistic handler's identical note. For THIS
+                    # strategy specifically, `strategy='redis'` is what lets
+                    # a declined payment's release target the Redis counter
+                    # (INCR stock:{sale_id}) instead of reserved_stock --
+                    # this path never touches reserved_stock going forward
+                    # either, so releasing there would silently do nothing.
+                    "INSERT INTO orders (id, user_id, sale_id, status, strategy, created_at) "
+                    "VALUES (gen_random_uuid(), :uid, :sid, 'confirmed', 'redis', now()) RETURNING id"
                 ),
                 {"uid": user_id, "sid": sale_id},
             ).fetchone()[0]

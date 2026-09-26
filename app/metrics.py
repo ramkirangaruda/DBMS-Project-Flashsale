@@ -145,6 +145,18 @@ ADMISSION_REJECTED = Counter(
     ["reason"],
 )
 
+QUEUE_ADMISSION_LEADER = Gauge(
+    "queue_admission_leader",
+    "1 on the single replica currently holding the admission-worker lease, "
+    "0 on every other replica. Under horizontal scaling, each API process "
+    "runs its own admission-worker thread (see app/queue.py); without this "
+    "lease exactly-one-active guarantee, N replicas silently admit at N "
+    "times the configured rate -- discovered during the scaling phase and "
+    "fixed by gating admit() behind this lease. Summed across replicas this "
+    "should read exactly 1 at all times (0 only in the brief window during "
+    "leader failover); anything else means the fix has regressed.",
+)
+
 
 # --------------------------------------------------------------------------
 # Checkout observation middleware
