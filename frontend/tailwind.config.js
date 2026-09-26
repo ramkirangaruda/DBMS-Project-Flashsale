@@ -65,7 +65,6 @@ export default {
           to: { transform: 'translateY(0)', opacity: '1' },
         },
       },
-      },
       animation: {
         'pulse-ring': 'pulse-ring 1.6s ease-out infinite',
         'slide-up': 'slide-up .35s cubic-bezier(0.16,1,0.3,1) both',
