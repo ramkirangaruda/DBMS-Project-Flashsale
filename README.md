@@ -353,6 +353,43 @@ your report — there are no ground-truth bot labels for it. The 83% recall
 figure belongs only to the synthetic harness, which has labels by
 construction.
 
+## Payments (Stripe test mode)
+
+A checkout that returns `"confirmed"` reserves stock and writes an `Order`
+row; it doesn't move money. `POST /payment/create/{order_id}` layers a
+Stripe **test-mode** payment step on top of an already-confirmed order --
+separate from, and after, the concurrency-control decision the three
+`/checkout/*` strategies already made.
+
+- **Payment state lives in Postgres**, not Redis: the `payments` table
+  (`app/models.py`), unique on `(order_id, attempt)`. Every writer -- the
+  synchronous create/confirm call and the async webhook handler alike --
+  `INSERT ... ON CONFLICT DO UPDATE`, so concurrent writers can never
+  disagree about the same underlying Stripe fact.
+- **Idempotency key is `(order_id, attempt)`, not just `order_id`.** Stripe
+  caches an idempotency key's response for 24h; a fixed key would replay a
+  stale decline forever instead of letting a genuine retry reach the card
+  network again. `_next_attempt()` in `app/payments.py` computes the number.
+- **A declined payment releases the unit it held**, from whichever counter
+  its checkout strategy actually reserved it from (`orders.strategy`,
+  written by the checkout handlers) -- `inventory.reserved_stock` for
+  pessimistic/optimistic, the Redis `stock:{sale_id}` counter for the
+  Redis fast path. Gated on a conditional `UPDATE ... WHERE status !=
+  'failed'`, so a redelivered webhook (Stripe does not guarantee
+  exactly-once delivery) cannot release the same unit twice.
+- **Fails soft, not loud, when unset.** `STRIPE_SECRET_KEY` is read lazily,
+  per request, not at import time -- a student without a Stripe account
+  still gets the storefront, dashboard, and every other demo; only
+  `/payment/*` itself returns a `503` with setup instructions.
+
+Verified against real Postgres and Redis with a synthetic webhook payload
+shaped exactly like Stripe's real `payment_intent.payment_failed` event --
+see [`results/payment_notes.md`](results/payment_notes.md) for the full
+before/after evidence (strategy-aware release, redelivery safety, the
+unknown-strategy refusal-to-guess case) and exactly what still needs a real
+`STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET` to exercise end-to-end
+(`scripts/payment_verify.py --scenario all`).
+
 ## Deploying to Vercel
 
 Local/docker-compose and Vercel are genuinely different deployments, not one
