@@ -25,7 +25,9 @@ WHAT IT DOES
     `ADD COLUMN IF NOT EXISTS`, which is a no-op on every call after the
     first -- safe to run on every startup, on every replica, forever.
 """
-from sqlalchemy import text
+from sqlalchemy import CheckConstraint, text
+
+from app.database import Base
 
 
 def run(engine):
@@ -33,3 +35,29 @@ def run(engine):
         conn.execute(text(
             "ALTER TABLE orders ADD COLUMN IF NOT EXISTS strategy VARCHAR(20)"
         ))
+        # Redundant: uq_payments_order_attempt already leads with order_id.
+        conn.execute(text("DROP INDEX IF EXISTS ix_payments_order_id"))
+
+    apply_model_constraints_and_indexes(engine)
+
+
+def apply_model_constraints_and_indexes(engine):
+    """
+    Brings an EXISTING database up to what app/models.py declares, which
+    create_all() never does for tables that already exist: named CHECK
+    constraints and indexes. Models stay the single source of truth.
+    Idempotent -- every step is skipped if already present.
+    """
+    with engine.begin() as conn:
+        present = {r[0] for r in conn.execute(text(
+            "SELECT conname FROM pg_constraint WHERE contype = 'c'"
+        ))}
+        for table in Base.metadata.sorted_tables:
+            for c in table.constraints:
+                if isinstance(c, CheckConstraint) and c.name and c.name not in present:
+                    conn.execute(text(
+                        f'ALTER TABLE "{table.name}" ADD CONSTRAINT "{c.name}" '
+                        f"CHECK ({c.sqltext})"
+                    ))
+            for ix in table.indexes:
+                ix.create(bind=conn, checkfirst=True)

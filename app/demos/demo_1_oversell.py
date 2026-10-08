@@ -53,40 +53,63 @@ def naive_checkout(user_id: str, results: list, index: int):
         else:
             db.rollback()
             results[index] = "REJECTED (no stock)"
+    except Exception as e:  # noqa: BLE001
+        db.rollback()
+        reason = "CHECK ck_inventory_no_oversell" if "ck_inventory_no_oversell" in str(e) else type(e).__name__
+        results[index] = f"REFUSED BY DATABASE ({reason})"
     finally:
         db.close()
 
 
-def run():
-    # Reset reserved_stock to 0 and total_stock to a very scarce number
-    # so the race is easy to trigger and easy to see.
+def _fire(label):
     reset_db = SessionLocal()
     reset_db.execute(text("UPDATE inventory SET reserved_stock = 0, total_stock = 1 WHERE sale_id = :sid"), {"sid": SALE_ID})
     reset_db.commit()
     reset_db.close()
 
     N = 8  # 8 concurrent buyers competing for 1 unit
-    threads = []
     results = [None] * N
-    print(f"Firing {N} concurrent checkout attempts at 1 unit of stock (no locking)...\n")
-    for i in range(N):
-        t = threading.Thread(target=naive_checkout, args=(USER_IDS[i], results, i))
-        threads.append(t)
+    print(f"{label}\nFiring {N} concurrent checkout attempts at 1 unit of stock (no locking)...\n")
+    threads = [threading.Thread(target=naive_checkout, args=(USER_IDS[i], results, i)) for i in range(N)]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
-
-    confirmed = sum(1 for r in results if r and r.startswith("CONFIRMED"))
     for i, r in enumerate(results):
         print(f"  buyer {i}: {r}")
+    return sum(1 for r in results if r and r.startswith("CONFIRMED"))
 
+
+def run():
+    """
+    PART A removes the database-level CHECK (reserved_stock <= total_stock)
+    so the application-level race is visible on its own. PART B restores it
+    and replays the identical naive code: the race still happens, but the
+    database refuses every increment past total_stock, so no oversell.
+    """
+    admin = SessionLocal()
+    admin.execute(text("ALTER TABLE inventory DROP CONSTRAINT IF EXISTS ck_inventory_no_oversell"))
+    admin.commit()
+    try:
+        confirmed = _fire("PART A -- naive checkout, database backstop REMOVED")
+        print(f"\nStock available was 1. Confirmed orders: {confirmed}")
+        if confirmed > 1:
+            print("OVERSOLD -- this is the lost-update problem in action.")
+        else:
+            print("No oversell this run (race conditions are timing-dependent -- re-run a few times).")
+    finally:
+        admin.execute(text("UPDATE inventory SET reserved_stock = 0, total_stock = 1 WHERE sale_id = :sid"), {"sid": SALE_ID})
+        admin.execute(text("ALTER TABLE inventory ADD CONSTRAINT ck_inventory_no_oversell CHECK (reserved_stock <= total_stock)"))
+        admin.commit()
+        admin.close()
+
+    print("\n" + "=" * 70)
+    confirmed = _fire("PART B -- same naive code, CHECK ck_inventory_no_oversell RESTORED")
     print(f"\nStock available was 1. Confirmed orders: {confirmed}")
-    if confirmed > 1:
-        print("OVERSOLD -- this is the lost-update problem in action.")
-    else:
-        print("No oversell this run (race conditions are timing-dependent -- "
-              "re-run a few times, or see demo_2/3/4 for guaranteed-correct versions).")
+    print("The code is just as racy, but the database itself refused every")
+    print("increment past total_stock. Correct strategies (demo_2/3/4) avoid the")
+    print("wasted work; the CHECK constraint guarantees the DATA stays valid even")
+    print("if a handler has a locking bug.")
 
 
 if __name__ == "__main__":
