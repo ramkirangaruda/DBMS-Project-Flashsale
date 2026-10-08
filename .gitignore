@@ -25,3 +25,6 @@ data/*.xlsx
 .vscode/
 .idea/
 .DS_Store
+
+# Trained ML model binary (metrics JSON next to it IS committed)
+app/ml/artifacts/*.joblib

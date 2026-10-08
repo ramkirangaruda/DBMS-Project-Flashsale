@@ -1,0 +1,10 @@
+{
+  "contamination": 0.1,
+  "sessions": 1000,
+  "bots": 100,
+  "recall": 0.83,
+  "precision": 0.83,
+  "roc_auc_mean_5_seeds": 0.989,
+  "average_precision_mean_5_seeds": 0.876,
+  "note": "synthetic harness with known labels; real-data path has no labels"
+}

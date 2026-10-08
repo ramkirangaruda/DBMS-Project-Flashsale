@@ -1,57 +1,72 @@
 {
   "source": "UCI Online Retail dataset (real data)",
-  "mae": 21.84,
-  "r2": 0.082,
+  "mae": 21.48,
+  "r2": 0.178,
   "samples": [
     {
       "label": "SKU sample 1",
-      "predicted": 67.1,
-      "actual": 60.0
+      "predicted": 24.0,
+      "actual": 0.0
     },
     {
       "label": "SKU sample 2",
-      "predicted": 79.0,
-      "actual": 0.0
+      "predicted": 10.6,
+      "actual": 12.0
     },
     {
       "label": "SKU sample 3",
-      "predicted": 1.5,
-      "actual": 0.0
+      "predicted": 11.0,
+      "actual": 1.0
     },
     {
       "label": "SKU sample 4",
-      "predicted": 27.6,
-      "actual": 10.0
+      "predicted": 10.9,
+      "actual": 0.0
     },
     {
       "label": "SKU sample 5",
-      "predicted": 18.1,
-      "actual": 0.0
+      "predicted": 14.1,
+      "actual": 9.0
     },
     {
       "label": "SKU sample 6",
-      "predicted": 21.8,
-      "actual": 3.0
-    },
-    {
-      "label": "SKU sample 7",
-      "predicted": 17.0,
-      "actual": 100.0
-    },
-    {
-      "label": "SKU sample 8",
-      "predicted": 8.4,
+      "predicted": 11.1,
       "actual": 0.0
     },
     {
+      "label": "SKU sample 7",
+      "predicted": 3.2,
+      "actual": 19.0
+    },
+    {
+      "label": "SKU sample 8",
+      "predicted": 18.0,
+      "actual": 48.0
+    },
+    {
       "label": "SKU sample 9",
-      "predicted": -0.2,
+      "predicted": 18.9,
       "actual": 0.0
     },
     {
       "label": "SKU sample 10",
-      "predicted": 5.7,
-      "actual": 0.0
+      "predicted": 9.3,
+      "actual": 9.0
     }
-  ]
+  ],
+  "baselines": {
+    "naive_yesterday": {
+      "mae": 33.12,
+      "r2": -0.661
+    },
+    "naive_trailing_28d_mean": {
+      "mae": 25.11,
+      "r2": 0.155
+    }
+  },
+  "split": {
+    "method": "time-based (train on earlier calendar days, test on the last 20%)",
+    "test_starts": "2011-10-02",
+    "winsor_cap_units": 360.0
+  }
 }
