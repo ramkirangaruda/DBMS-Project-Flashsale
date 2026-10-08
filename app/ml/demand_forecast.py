@@ -20,58 +20,45 @@ that mimics realistic flash-sale demand patterns, NOT real data. If
 data/online_retail.xlsx is missing, train_and_evaluate() falls back to it
 automatically and prints a warning; it is not the default path.
 
-WHY THE REAL-DATA R^2 IS LOW (~0.08), AND WHY THAT IS NOT A BUG
----------------------------------------------------------------
-There is a structural mismatch between what this project wants to predict
-and what the UCI dataset can answer.
+HOW THE SHIPPED MODEL IS TRAINED AND EVALUATED
+----------------------------------------------
+  - Target: each SKU's units sold on the NEXT calendar day, winsorized at the
+    99.5th percentile of the daily panel (360 units). Raw daily quantities are
+    heavy-tailed (median 0, max 80,995) and a few wholesale orders would
+    otherwise dominate squared error; the cap is applied to features and
+    target and every metric is on the capped target.
+  - Features: price, discount proxy, popularity bucket, calendar, plus per-SKU
+    lag-1/lag-7 and rolling 7/14/28-day mean demand and sale frequency. All
+    use shift(1) first, so they only see strictly earlier days.
+  - Split: TIME-BASED -- train on the first 80% of the calendar, test on the
+    last 20%, boundary day purged. (A random split on per-SKU time series
+    lets rolling features straddle the split and flatters the score.)
+  - Baselines on the same test rows: "yesterday" and "trailing-28-day mean".
+  - Result (see app/ml/artifacts/demand_metrics.json): MAE 21.48 vs 25.11
+    for the best baseline, R^2 0.178 vs 0.155. The model beats both baselines,
+    but modestly -- see below for why that is expected.
 
-The system's actual question is flash-sale burst velocity: "how many units
-will move in the first 60 seconds of a scarce, time-boxed sale event?" The
-UCI Online Retail dataset contains no flash-sale events at all. It is a
-year of ordinary invoice lines from a gift retailer -- steady wholesale and
-retail reordering, aggregated to daily granularity at best. There is no
-event to be fast during. So the real-data path predicts the nearest
-answerable question instead (next-day units sold per SKU), and that
-substitution, not the model, is what caps the score.
+WHY R^2 STAYS LOW, AND WHY THAT IS NOT A BUG
+--------------------------------------------
+The system's real question is flash-sale burst velocity ("units in the first
+60 seconds of a scarce, time-boxed event"). The UCI Online Retail dataset has
+no flash-sale events: it is a year of ordinary invoice lines, ~51% of SKU-days
+have ZERO sales, and per-SKU daily counts are dominated by lumpy wholesale
+reorders. The nearest answerable question is next-day units, and that
+substitution, not the model, caps the score. The same code scores R^2 0.941 on
+the synthetic control, whose labels ARE a known formula of its features plus
+noise -- a ceiling by construction that only proves the training/evaluation
+path works and must never be quoted as forecasting accuracy.
 
-Two properties of the data make daily prediction especially hard:
-  - ~51% of SKU-days in the panel have ZERO sales. The target is a
-    spike-and-zero series, so a large share of the variance is arrival
-    timing rather than demand level.
-  - Per-SKU daily counts at this granularity are dominated by lumpy
-    wholesale reorders, which are close to unpredictable from price and
-    calendar features alone.
+A negative finding worth keeping: on a 7-day horizon (winsorized, time-based
+split) a plain trailing-28-day mean (R^2 0.505) BEAT the gradient-boosting
+model (R^2 0.272), so the model is shipped only for the next-day question
+where it does beat the baselines.
 
-compare_framings() below quantifies this rather than asserting it. Measured
-on this dataset (see docs/results.md for the captured run):
-  - next-day units (the shipped framing):          R^2 = 0.082
-  - next-7-day total units:                        R^2 = 0.270
-  - next-week units (weekly panel):                R^2 = 0.259
-  - same-day units (nowcast, not a forecast):      R^2 = 0.319
-  - same-week units (nowcast, weekly):             R^2 = 0.484
-  - the SAME model code on synthetic data:         R^2 = 0.941
-
-Read those together and the diagnosis is unambiguous. The pipeline is
-correct -- identical model code scores 0.941 when the target is actually
-learnable from the features. Coarsening the horizon roughly triples R^2
-(0.082 -> ~0.27), because aggregation averages out the day-to-day arrival
-noise that dominates the daily target. And the nowcast rows show the
-features do carry genuine signal (0.319 / 0.484); it is specifically the
-step forward in time that this dataset does not support well.
-
-Note that R^2 is NOT directly comparable across these rows -- each target
-has its own variance denominator -- so the numbers indicate which questions
-are answerable, not a leaderboard. The synthetic 0.941 in particular is a
-ceiling produced by construction, not an achievement: that generator's
-labels ARE a known formula of its features plus Gaussian noise, so a good
-model must recover it. Quoting it as evidence of model quality would be
-dishonest; its only legitimate use is the one made here -- as a control
-proving the training/evaluation code works, isolating the low real-data
-score as a data-framing limit.
-
-The shipped default remains next-day units so the reported MAE stays in
-directly interpretable units, with the better-posed horizons reported
-alongside rather than silently swapped in.
+compare_framings() below is a LEGACY diagnostic: it still uses the original
+six features and a random split, so its numbers (next-day 0.082, next-7-day
+0.270, ...) are comparable to each other but are NOT comparable to the
+time-based result above.
 
 Run with: venv/bin/python -m app.ml.demand_forecast
              (add --framings to also run the framing comparison above;
@@ -92,8 +79,22 @@ DATA_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "online_retail.xlsx"
 )
 
-REAL_FEATURE_COLS = ["base_price", "discount_pct", "category_popularity", "day_of_week", "pre_period_demand", "is_weekend"]
+# Original six features -- still what compare_framings() (a legacy diagnostic,
+# random split) uses, so its numbers stay comparable to what was reported.
+LEGACY_FEATURE_COLS = ["base_price", "discount_pct", "category_popularity", "day_of_week", "pre_period_demand", "is_weekend"]
+# Shipped model: the legacy six plus per-SKU lag / rolling-demand features.
+REAL_FEATURE_COLS = LEGACY_FEATURE_COLS + [
+    "lag1", "lag7", "roll7", "roll14", "roll28", "roll7_nonzero", "roll28_nonzero", "month",
+]
 REAL_TARGET_COL = "next_day_qty"
+# Daily quantities are heavy-tailed (median 0, max 80,995): a handful of
+# wholesale orders dominate squared error. Quantities are winsorized at this
+# percentile of the daily panel, in features AND target, and every reported
+# metric is on the winsorized target -- stated, not hidden.
+WINSOR_QUANTILE = 0.995
+TEST_FRACTION_OF_TIME = 0.2   # last 20% of the calendar is the held-out test period
+
+ARTIFACT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "artifacts")
 
 SYNTHETIC_FEATURE_COLS = ["base_price", "discount_pct", "category_popularity", "day_of_week", "wishlist_count_pre_sale", "is_weekend"]
 SYNTHETIC_TARGET_COL = "orders_first_60s"
@@ -240,49 +241,124 @@ def _build_daily_panel(path=DATA_PATH, top_n_skus=500, pre_period_days=7):
 
 
 def load_real_data(path=DATA_PATH, top_n_skus=500, pre_period_days=7):
-    """Shipped real-data framing: predict each SKU's units sold on the NEXT
-    calendar day. See the module docstring for why this target scores low and
-    which alternative horizons score better -- compare_framings() measures
-    them."""
+    """Shipped real-data framing: predict each SKU's winsorized units sold on
+    the NEXT calendar day, from lagged / rolling per-SKU demand plus price and
+    calendar features. Returns the feature columns, the target, and `day`
+    (kept for the time-based split, never used as a feature).
+
+    All lag/rolling features use shift(1) first, so they only see strictly
+    earlier days -- no row's features contain its own or any future target."""
+    import pandas as pd
+
     panel = _build_daily_panel(path, top_n_skus, pre_period_days)
-    panel["next_day_qty"] = panel.groupby("StockCode")["qty"].shift(-1)
-    panel = panel.dropna(subset=["pre_period_demand", "next_day_qty"])
-    return panel[REAL_FEATURE_COLS + [REAL_TARGET_COL]].reset_index(drop=True)
+    panel.index.name = "day"
+    p = panel.reset_index().sort_values(["StockCode", "day"])
+
+    cap = float(p["qty"].quantile(WINSOR_QUANTILE))
+    p["qty"] = p["qty"].clip(upper=cap)
+    p["pre_period_demand"] = p.groupby("StockCode")["qty"].transform(
+        lambda s: s.shift(1).rolling(pre_period_days, min_periods=1).sum())
+
+    g = p.groupby("StockCode")["qty"]
+    p["lag1"] = g.shift(1)
+    p["lag7"] = g.shift(7)
+    for w in (7, 14, 28):
+        p[f"roll{w}"] = g.transform(lambda s, w=w: s.shift(1).rolling(w, min_periods=1).mean())
+    p["roll7_nonzero"] = g.transform(lambda s: (s.shift(1) > 0).rolling(7, min_periods=1).mean())
+    p["roll28_nonzero"] = g.transform(lambda s: (s.shift(1) > 0).rolling(28, min_periods=1).mean())
+    p["month"] = p["day"].dt.month
+    p[REAL_TARGET_COL] = g.shift(-1)
+
+    p = p.dropna(subset=["pre_period_demand", "lag7", REAL_TARGET_COL])
+    out = p[REAL_FEATURE_COLS + [REAL_TARGET_COL, "day"]].reset_index(drop=True)
+    out.attrs["winsor_cap"] = cap
+    return out
 
 
-def _fit(force_synthetic=False):
-    """Shared training step behind both train_and_evaluate() (prints a full
-    report) and get_forecast_sample() (returns JSON for the live dashboard)."""
+def _fit(force_synthetic=False, save=False):
+    """Shared training step behind train_and_evaluate() (prints a full report)
+    and get_forecast_sample() (returns JSON for the live dashboard).
+
+    Real data: TIME-BASED split -- train on the first 80% of the calendar, test
+    on the final 20%, with the one-day boundary purged. A random split on a
+    per-SKU time series lets rolling features leak across the split and
+    flatters the score; this measures what forecasting actually requires.
+    Also scores two naive baselines (yesterday, trailing-28-day mean) on the
+    same test rows: a model that cannot beat them is not worth shipping."""
+    import numpy as np
     from sklearn.ensemble import GradientBoostingRegressor
     from sklearn.model_selection import train_test_split
     from sklearn.metrics import mean_absolute_error, r2_score
 
     use_real = (not force_synthetic) and os.path.exists(DATA_PATH)
+    baselines = None
+    split_info = None
 
     if use_real:
+        import pandas as pd
         df = load_real_data()
         feature_cols, target_col = REAL_FEATURE_COLS, REAL_TARGET_COL
         source_label = "UCI Online Retail dataset (real data)"
+        cut = df["day"].quantile(1 - TEST_FRACTION_OF_TIME)
+        train_df = df[df["day"] <= cut - pd.Timedelta(days=1)]
+        test_df = df[df["day"] > cut]
+        X_train, y_train = train_df[feature_cols], train_df[target_col]
+        X_test, y_test = test_df[feature_cols], test_df[target_col]
+        baselines = {}
+        for name, col in (("naive_yesterday", "lag1"), ("naive_trailing_28d_mean", "roll28")):
+            bp = test_df[col].to_numpy()
+            baselines[name] = {
+                "mae": round(float(mean_absolute_error(y_test, bp)), 2),
+                "r2": round(float(r2_score(y_test, bp)), 3),
+            }
+        split_info = {
+            "method": "time-based (train on earlier calendar days, test on the last 20%)",
+            "test_starts": str(cut.date()),
+            "winsor_cap_units": df.attrs.get("winsor_cap"),
+        }
+        model = GradientBoostingRegressor(
+            n_estimators=300, max_depth=4, learning_rate=0.05, subsample=0.8, random_state=42)
     else:
         df = generate_synthetic_fallback_data()
         feature_cols, target_col = SYNTHETIC_FEATURE_COLS, SYNTHETIC_TARGET_COL
         source_label = "synthetic demo generator (NOT real data)"
+        X_train, X_test, y_train, y_test = train_test_split(
+            df[feature_cols], df[target_col], test_size=0.2, random_state=42)
+        model = GradientBoostingRegressor(n_estimators=200, max_depth=3, learning_rate=0.05, random_state=42)
 
-    X = df[feature_cols]
-    y = df[target_col]
-
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-    model = GradientBoostingRegressor(n_estimators=200, max_depth=3, learning_rate=0.05, random_state=42)
     model.fit(X_train, y_train)
-
-    preds = model.predict(X_test)
-    return {
+    preds = np.clip(model.predict(X_test), 0, None)
+    result = {
         "model": model, "feature_cols": feature_cols, "target_col": target_col,
         "source_label": source_label, "X_train": X_train, "X_test": X_test,
         "y_train": y_train, "y_test": y_test, "preds": preds,
         "mae": mean_absolute_error(y_test, preds), "r2": r2_score(y_test, preds),
+        "baselines": baselines, "split": split_info,
     }
+    if save and use_real:
+        _save_artifacts(result)
+    return result
+
+
+def _save_artifacts(r):
+    """Persist the trained model (gitignored) and its metrics (committed)."""
+    import joblib
+    os.makedirs(ARTIFACT_DIR, exist_ok=True)
+    joblib.dump({"model": r["model"], "feature_cols": r["feature_cols"]},
+                os.path.join(ARTIFACT_DIR, "demand_model.joblib"))
+    metrics = {
+        "source": r["source_label"], "target": r["target_col"],
+        "train_rows": int(len(r["X_train"])), "test_rows": int(len(r["X_test"])),
+        "mae": round(float(r["mae"]), 2), "r2": round(float(r["r2"]), 3),
+        "baselines": r["baselines"], "split": r["split"],
+        "features": r["feature_cols"],
+        "feature_importance": {
+            n: round(float(i), 4)
+            for n, i in sorted(zip(r["feature_cols"], r["model"].feature_importances_), key=lambda x: -x[1])
+        },
+    }
+    with open(os.path.join(ARTIFACT_DIR, "demand_metrics.json"), "w") as f:
+        json.dump(metrics, f, indent=2)
 
 
 def _eval_framing(df, feature_cols, target_col):
@@ -337,15 +413,15 @@ def compare_framings(path=DATA_PATH):
 
     panel["next_day_qty"] = panel.groupby("StockCode")["qty"].shift(-1)
     rows.append(("next-day units (SHIPPED framing)", "forecast",
-                 _eval_framing(panel, REAL_FEATURE_COLS, "next_day_qty")))
+                 _eval_framing(panel, LEGACY_FEATURE_COLS, "next_day_qty")))
 
     panel["next_7d_qty"] = panel.groupby("StockCode")["qty"].transform(
         lambda s: s.shift(-7).rolling(7, min_periods=7).sum())
     rows.append(("next-7-day total units", "forecast",
-                 _eval_framing(panel, REAL_FEATURE_COLS, "next_7d_qty")))
+                 _eval_framing(panel, LEGACY_FEATURE_COLS, "next_7d_qty")))
 
     rows.append(("same-day units (NOWCAST, diagnostic)", "not a forecast",
-                 _eval_framing(panel, REAL_FEATURE_COLS, "qty")))
+                 _eval_framing(panel, LEGACY_FEATURE_COLS, "qty")))
 
     # Weekly panel -- coarser grain, rebuilt from the same daily rows.
     wk = panel.reset_index().rename(columns={"index": "day"})
@@ -407,7 +483,7 @@ def train_and_evaluate(force_synthetic=False):
             print("README to train on actual data instead:")
             print("  https://archive.ics.uci.edu/ml/machine-learning-databases/00352/Online%20Retail.xlsx\n")
 
-    r = _fit(force_synthetic)
+    r = _fit(force_synthetic, save=True)
     model, feature_cols, target_col = r["model"], r["feature_cols"], r["target_col"]
     preds, y_test = r["preds"], r["y_test"]
 
@@ -417,6 +493,14 @@ def train_and_evaluate(force_synthetic=False):
     print(f"Training rows: {len(r['X_train']):,}   Test rows: {len(r['X_test']):,}")
     print(f"Mean Absolute Error: {r['mae']:.2f} units ({target_col})")
     print(f"R^2 score: {r['r2']:.3f}")
+    if r["baselines"]:
+        print(f"Split: {r['split']['method']}; test period starts {r['split']['test_starts']}")
+        print(f"Target winsorized at {r['split']['winsor_cap_units']:.0f} units/day (99.5th pct)")
+        print("Baselines on the SAME test rows (the model must beat these):")
+        for name, b in r["baselines"].items():
+            verdict = "model beats it" if r["mae"] < b["mae"] else "MODEL DOES NOT BEAT IT"
+            print(f"  {name:26} MAE {b['mae']:6.2f}   R^2 {b['r2']:6.3f}   -> {verdict}")
+        print(f"Saved model + metrics to {ARTIFACT_DIR}")
     print()
     print("Feature importances:")
     for name, imp in sorted(zip(feature_cols, model.feature_importances_), key=lambda x: -x[1]):
@@ -502,6 +586,7 @@ def get_forecast_sample(n=10):
         return _static_forecast_sample(n)
 
     global _dashboard_cache
+    import numpy as np
     if _dashboard_cache is None:
         with _dashboard_lock:
             if _dashboard_cache is None:
@@ -509,15 +594,21 @@ def get_forecast_sample(n=10):
     r = _dashboard_cache
     preds, y_test = r["preds"], r["y_test"]
     n = min(n, len(y_test))
-    return {
+    # Evenly spaced test rows, not just the first n (which would all be one SKU).
+    idx = [int(i) for i in np.linspace(0, len(y_test) - 1, n)] if n else []
+    out = {
         "source": r["source_label"],
         "mae": round(float(r["mae"]), 2),
         "r2": round(float(r["r2"]), 3),
         "samples": [
-            {"label": f"SKU sample {i+1}", "predicted": round(float(preds[i]), 1), "actual": round(float(y_test.values[i]), 1)}
-            for i in range(n)
+            {"label": f"SKU sample {k+1}", "predicted": round(float(preds[i]), 1), "actual": round(float(y_test.values[i]), 1)}
+            for k, i in enumerate(idx)
         ],
     }
+    if r.get("baselines"):
+        out["baselines"] = r["baselines"]
+        out["split"] = r["split"]
+    return out
 
 
 if __name__ == "__main__":

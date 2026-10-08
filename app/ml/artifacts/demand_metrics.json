@@ -1,0 +1,55 @@
+{
+  "source": "UCI Online Retail dataset (real data)",
+  "target": "next_day_qty",
+  "train_rows": 130188,
+  "test_rows": 32096,
+  "mae": 21.48,
+  "r2": 0.178,
+  "baselines": {
+    "naive_yesterday": {
+      "mae": 33.12,
+      "r2": -0.661
+    },
+    "naive_trailing_28d_mean": {
+      "mae": 25.11,
+      "r2": 0.155
+    }
+  },
+  "split": {
+    "method": "time-based (train on earlier calendar days, test on the last 20%)",
+    "test_starts": "2011-10-02",
+    "winsor_cap_units": 360.0
+  },
+  "features": [
+    "base_price",
+    "discount_pct",
+    "category_popularity",
+    "day_of_week",
+    "pre_period_demand",
+    "is_weekend",
+    "lag1",
+    "lag7",
+    "roll7",
+    "roll14",
+    "roll28",
+    "roll7_nonzero",
+    "roll28_nonzero",
+    "month"
+  ],
+  "feature_importance": {
+    "roll28": 0.3058,
+    "day_of_week": 0.2443,
+    "category_popularity": 0.0872,
+    "roll14": 0.0721,
+    "roll7": 0.0535,
+    "pre_period_demand": 0.0449,
+    "month": 0.0432,
+    "lag1": 0.0284,
+    "is_weekend": 0.0241,
+    "base_price": 0.0239,
+    "roll28_nonzero": 0.0224,
+    "roll7_nonzero": 0.0179,
+    "lag7": 0.0163,
+    "discount_pct": 0.016
+  }
+}

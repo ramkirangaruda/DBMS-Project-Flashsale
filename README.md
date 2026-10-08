@@ -200,27 +200,38 @@ history for a stable rolling feature, and reframes it as: predict a SKU's
 units sold on the next calendar day from price, an implied discount,
 item popularity, and calendar effects.
 
-Sample result actually produced by `python -m app.ml.demand_forecast`
-against the real dataset:
+**How it is trained and scored (honest evaluation).** Daily quantities are
+heavy-tailed (median 0, max 80,995), so they are winsorized at the 99.5th
+percentile (360 units/day) in features and target, and every metric below is
+on that capped target. Features add per-SKU lag-1/lag-7, rolling 7/14/28-day
+mean demand and sale frequency to the original price/calendar set. The split
+is **time-based**: train on the first 80% of the calendar, test on the last
+20% (from 2011-10-02), because a random split on per-SKU time series lets
+rolling features straddle the split and flatters the score. The trained
+model and its metrics are saved to `app/ml/artifacts/` (`demand_metrics.json`
+is committed, the `.joblib` is gitignored).
+
+Result actually produced by `python -m app.ml.demand_forecast`:
 
 ```
-Training rows: 132,616   Test rows: 33,154
-Mean Absolute Error: 21.84 units (next_day_qty)
-R^2 score: 0.082
-
-Feature importances:
-  pre_period_demand            0.426
-  day_of_week                  0.286
-  category_popularity          0.188
-  base_price                   0.044
-  discount_pct                 0.038
-  is_weekend                   0.016
+Training rows: 130,188   Test rows: 32,096
+Mean Absolute Error: 21.48 units (next_day_qty)
+R^2 score: 0.178
+Baselines on the SAME test rows:
+  naive_yesterday            MAE  33.12   R^2 -0.661   -> model beats it
+  naive_trailing_28d_mean    MAE  25.11   R^2  0.155   -> model beats it
 ```
 
-Be upfront about this in your report: R^2 = 0.082 is real. But don't stop
-at "real data is noisy" -- the script measures *why*. Every run prints a
-sanity control that retrains the same model code on the synthetic
-generator, and `--framings` runs a full comparison:
+The model beats both baselines, modestly -- which is the honest outcome for
+this data. A negative result worth stating in the report: on a 7-day horizon
+a plain trailing-28-day mean (R^2 0.505) beat the gradient-boosting model
+(0.272), so the model is shipped only for the next-day question where it
+earns its place. (Earlier versions reported MAE 21.84 / R^2 0.082 from a
+random split with the original six features; that figure is not comparable.)
+
+The comparison below is the **legacy framing diagnostic**: it still uses the
+original six features and a random split, so read its rows against each
+other, not against the result above.
 
 ```bash
 python -m app.ml.demand_forecast --framings
@@ -229,7 +240,7 @@ python -m app.ml.demand_forecast --framings
 ```
 Framing                                  Kind                  R^2        MAE       rows
 ----------------------------------------------------------------------------------------
-next-day units (SHIPPED framing)         forecast            0.082      21.84    165,770
+next-day units (legacy features)         forecast            0.082      21.84    165,770
 next-7-day total units                   forecast            0.270      94.32    160,281
 same-day units (NOWCAST, diagnostic)     not a forecast      0.319      17.23    166,269
 next-week units (weekly panel)           forecast            0.259      90.16     23,205
