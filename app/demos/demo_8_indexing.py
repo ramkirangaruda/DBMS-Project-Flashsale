@@ -125,6 +125,11 @@ def print_markdown_table(results):
         with_s = f"{r['with_scan']}, {r['with_ms']:.2f} ms" if r["with_ms"] is not None else r["with_scan"]
         without_s = f"{r['without_scan']}, {r['without_ms']:.2f} ms" if r["without_ms"] is not None else r["without_scan"]
         print(f"| {r['query']} | {with_s} | {without_s} | {speedup_s} |")
+    if any(r["with_ms"] and r["without_ms"] / r["with_ms"] < 1 for r in results):
+        print("\nNote: a speedup below 1.0x is genuine planner behaviour, not an error. The")
+        print("hash-index query matches ~1% of a small, fully cached table, so a bitmap")
+        print("index scan's overhead can exceed one sequential pass. Indexes pay off with")
+        print("selectivity and table size; report the measurement and explain it.")
 
 
 def run():

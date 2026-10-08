@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     Column, String, Integer, Numeric, DateTime, ForeignKey, Enum, Text, Index,
-    UniqueConstraint,
+    UniqueConstraint, CheckConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -73,6 +73,10 @@ class Product(Base):
 
     sale_events = relationship("FlashSaleEvent", back_populates="product")
 
+    __table_args__ = (
+        CheckConstraint("base_price >= 0", name="ck_products_base_price_nonneg"),
+    )
+
 
 class FlashSaleEvent(Base):
     __tablename__ = "flash_sale_events"
@@ -86,6 +90,13 @@ class FlashSaleEvent(Base):
     product = relationship("Product", back_populates="sale_events")
     inventory = relationship("Inventory", back_populates="sale", uselist=False)
     orders = relationship("Order", back_populates="sale")
+
+    __table_args__ = (
+        CheckConstraint("end_time > start_time", name="ck_sale_window_ordered"),
+        CheckConstraint("sale_price >= 0", name="ck_sale_price_nonneg"),
+        # FK columns are not indexed by Postgres automatically.
+        Index("ix_flash_sale_events_product_id", "product_id"),
+    )
 
 
 class Inventory(Base):
@@ -104,6 +115,17 @@ class Inventory(Base):
     version = Column(Integer, nullable=False, default=0)  # OCC version column
 
     sale = relationship("FlashSaleEvent", back_populates="inventory")
+
+    __table_args__ = (
+        CheckConstraint("total_stock >= 0", name="ck_inventory_total_nonneg"),
+        CheckConstraint("reserved_stock >= 0", name="ck_inventory_reserved_nonneg"),
+        CheckConstraint("version >= 0", name="ck_inventory_version_nonneg"),
+        # The database-level oversell backstop: even a handler with a locking
+        # bug cannot push reserved_stock past total_stock -- Postgres refuses
+        # the UPDATE. The concurrency strategies keep the app correct; this
+        # keeps the DATA correct regardless.
+        CheckConstraint("reserved_stock <= total_stock", name="ck_inventory_no_oversell"),
+    )
 
     @property
     def available(self) -> int:
@@ -163,6 +185,8 @@ class OrderItem(Base):
     order = relationship("Order", back_populates="items")
 
     __table_args__ = (
+        CheckConstraint("quantity > 0", name="ck_order_items_quantity_positive"),
+        CheckConstraint("price_at_purchase >= 0", name="ck_order_items_price_nonneg"),
         # Referencing side of order_items.order_id -> orders.id. This is the
         # one whose absence made `DELETE FROM orders` effectively never finish
         # after seed_large.py -- see the note in scripts/seed.py.
@@ -227,6 +251,10 @@ class StockAuditLog(Base):
     after_value = Column(Integer)
     timestamp = Column(DateTime(timezone=True), default=now_utc)
     committed = Column(String(10), default="false")  # "true"/"false" -- drives redo/undo demo
+
+    __table_args__ = (
+        Index("ix_stock_audit_log_inventory_id", "inventory_id"),
+    )
 
 
 class Payment(Base):
@@ -303,8 +331,10 @@ class Payment(Base):
     order = relationship("Order", back_populates="payments")
 
     __table_args__ = (
+        # Also serves "latest attempt for this order" (the query every
+        # /payment/create and /payment/status call makes): order_id leads the
+        # unique index, so a separate order_id index would be redundant.
         UniqueConstraint("order_id", "attempt", name="uq_payments_order_attempt"),
-        # "Give me the latest attempt for this order" is the query every
-        # /payment/create and /payment/status call makes first.
-        Index("ix_payments_order_id", "order_id"),
+        CheckConstraint("amount_cents >= 0", name="ck_payments_amount_nonneg"),
+        CheckConstraint("attempt >= 1", name="ck_payments_attempt_positive"),
     )
