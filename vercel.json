@@ -10,7 +10,7 @@
   ],
   "routes": [
     {
-      "src": "^/(api|sales|checkout|flagged-orders|demand-forecast|admin|dashboard|docs|redoc|openapi\\.json|queue|metrics)(/.*)?$",
+      "src": "^/(api|sales|checkout|flagged-orders|demand-forecast|admin|dashboard|docs|redoc|openapi\\.json|queue|payment|metrics)(/.*)?$",
       "dest": "api/index.py"
     },
     { "handle": "filesystem" },

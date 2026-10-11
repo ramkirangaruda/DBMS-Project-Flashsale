@@ -67,6 +67,16 @@ tiny and the HTTP and Python overhead dominates. The feature was removed. The
 result supports the claim above: the gain comes from bounding concurrency in
 front of the database, not from cleverness inside it.
 
+## Follow-up: closed-loop admission (AIMD)
+
+The fixed K above had to be hand-picked. `app/admission_control.py` replaces it
+with a TCP-style congestion window driven by measured checkout latency
+(`docs/aimd_admission.md`). Honest result: it matches the best static K on
+pessimistic locking (19.4 s vs 18.9 s) with ~2.5x lower p95, but on optimistic
+locking it is ~2x slower than the best static K (33.3 s vs 15.1 s) while
+avoiding the collapse that bad static values cause (47-57% sold at K=80/160).
+Its value is not needing to tune K, not beating a tuned K.
+
 ## Limits (say these before you are asked)
 
 - One machine; results vary run to run.

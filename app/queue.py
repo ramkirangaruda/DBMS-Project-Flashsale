@@ -49,6 +49,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import text
 
+from app import admission_control
 from app.metrics import (
     QUEUE_ADMISSION_LEADER,
     QUEUE_ADMITS,
@@ -114,6 +115,11 @@ def estimated_wait_s(position):
     """
     if position <= 0:
         return 0.0
+    rate = admission_control.effective_rate()
+    if rate:
+        # Closed-loop (aimd) mode has no fixed batch: the honest estimate is
+        # how fast checkouts are actually completing right now.
+        return round(position / rate, 2)
     return round(math.ceil(position / max(1, ADMIT_BATCH)) * ADMIT_INTERVAL_S, 2)
 
 
@@ -265,8 +271,10 @@ def admit(r, sale_id, batch=None):
     # effective rate drifted below the configured one.
     pipe = r.pipeline()
     tokens_key = TOKENS_KEY.format(sale_id=sale_id)
+    issued = []
     for queue_token, joined_at in popped:
         admission_token = uuid.uuid4().hex
+        issued.append(admission_token)
         payload = json.dumps({
             "sale_id": sale_id,
             "queue_token": queue_token,
@@ -283,6 +291,7 @@ def admit(r, sale_id, batch=None):
         QUEUE_WAIT.observe(max(0.0, now - float(joined_at)))
         QUEUE_ADMITS.labels(sale_id=sale_id).inc()
     pipe.expire(tokens_key, ADMISSION_TTL_S * 4)
+    admission_control.track_grants(pipe, issued, now + ADMISSION_TTL_S)
     pipe.execute()
 
     return len(popped)
@@ -308,8 +317,10 @@ async def admit_async(r, sale_id, batch=None):
     now = time.time()
     pipe = r.pipeline()
     tokens_key = TOKENS_KEY.format(sale_id=sale_id)
+    issued = []
     for queue_token, joined_at in popped:
         admission_token = uuid.uuid4().hex
+        issued.append(admission_token)
         payload = json.dumps({
             "sale_id": sale_id,
             "queue_token": queue_token,
@@ -323,6 +334,7 @@ async def admit_async(r, sale_id, batch=None):
         QUEUE_WAIT.observe(max(0.0, now - float(joined_at)))
         QUEUE_ADMITS.labels(sale_id=sale_id).inc()
     pipe.expire(tokens_key, ADMISSION_TTL_S * 4)
+    admission_control.track_grants(pipe, issued, now + ADMISSION_TTL_S)
     await pipe.execute()
 
     return len(popped)
@@ -533,7 +545,10 @@ def start_admission_worker(r, session_factory, interval_s=None):
         # request path instead.
         return None
 
-    interval_s = interval_s or ADMIT_INTERVAL_S
+    # Closed-loop admission needs a faster clock than the static 500 ms batch
+    # cadence: the window is refilled as checkouts finish, not once per tick.
+    interval_s = interval_s or (admission_control.CFG.tick_s if admission_control.ENABLED
+                                else ADMIT_INTERVAL_S)
 
     def refresher():
         while True:
@@ -573,12 +588,26 @@ def start_admission_worker(r, session_factory, interval_s=None):
                 # rather than a real signal.
                 is_leader = _try_lead(r)
                 QUEUE_ADMISSION_LEADER.set(1 if is_leader else 0)
-                for sale_id in _queued_sale_ids(r):
+                sale_ids = _queued_sale_ids(r)
+                depths = {sid: r.zcard(Z_KEY.format(sale_id=sid)) for sid in sale_ids}
+                # Adaptive admission (ADMISSION_CONTROL=aimd): the leader
+                # turns the live congestion window into a budget of "how many
+                # more buyers may be let in right now"; followers only mirror
+                # the window so estimated_wait_s stays honest. With control
+                # off `budget` is None and the static batch is used, exactly
+                # as before.
+                budget = None
+                if is_leader:
+                    budget = admission_control.leader_tick(r, sum(depths.values()))
+                else:
+                    admission_control.refresh_cache(r)
+                for sale_id in sale_ids:
                     if is_leader:
-                        admit(r, sale_id)
-                    QUEUE_DEPTH.labels(sale_id=sale_id).set(
-                        r.zcard(Z_KEY.format(sale_id=sale_id))
-                    )
+                        if budget is None:
+                            admit(r, sale_id)
+                        elif budget > 0:
+                            budget -= admit(r, sale_id, budget)
+                    QUEUE_DEPTH.labels(sale_id=sale_id).set(depths[sale_id])
             except Exception:                                  # noqa: BLE001
                 pass                                           # never kill the thread
 
@@ -637,6 +666,25 @@ async def queue_reset(sale_id: str):
     return await reset(_aredis, sale_id)
 
 
+@router.post("/control/reset")
+def queue_control_reset():
+    """Forget the adaptive controller's learned admission rate (slow start
+    again). Benchmarks call this between arms so one run's rate does not leak
+    into the next."""
+    admission_control.reset_state(_redis)
+    return {"reset": True, "mode": admission_control.snapshot()["mode"]}
+
+
+@router.get("/control")
+def queue_control():
+    """The adaptive controller's live state: phase, rate, baseline, last
+    signal. Empty `state` when ADMISSION_CONTROL is not 'aimd'."""
+    state = None
+    if admission_control.ENABLED:
+        state = admission_control.asdict(admission_control.load_state(_redis))
+    return {**admission_control.snapshot(), "state": state}
+
+
 @router.get("/config")
 def queue_config():
     """What the admission rate currently is. The comparison in
@@ -648,10 +696,14 @@ def queue_config():
     per tick -- `is_leader_here` says whether it's THIS process, which is
     otherwise invisible from outside (there's no header or port that
     distinguishes which replica answered a request through nginx)."""
+    rate = admission_control.effective_rate()
     return {
         "admit_batch": ADMIT_BATCH,
         "admit_interval_s": ADMIT_INTERVAL_S,
-        "admission_rate_per_s": round(ADMIT_BATCH / ADMIT_INTERVAL_S, 2),
+        # In aimd mode there is no fixed rate: this is what checkouts are
+        # actually completing at (0 until the controller has measured it).
+        "admission_rate_per_s": round(rate, 2) if rate else round(ADMIT_BATCH / ADMIT_INTERVAL_S, 2),
+        "admission_control": admission_control.snapshot(),
         "admission_ttl_s": ADMISSION_TTL_S,
         "is_leader_here": is_admission_leader(_redis),
         "worker_id": _worker_id,
@@ -676,20 +728,31 @@ def install(app, redis_client, session_factory):
 
     _redis = redis_client
     kw = redis_client.connection_pool.connection_kwargs
-    _aredis = aioredis.Redis(
+    # A BLOCKING pool, not the default one. The default raises
+    # MaxConnectionsError("Too many connections") the moment 256 requests are
+    # inside Redis at once, so the first ~300 simultaneous /queue/join calls
+    # of a real drop returned HTTP 500 -- the waiting room failing in exactly
+    # the crowd it exists for (found by the admission-control benchmark, which
+    # joins ~1,700 buyers at the same instant). Waiting briefly for a pooled
+    # connection is the correct behaviour on an event loop: it costs a
+    # suspended coroutine, not a thread.
+    pool_kwargs = dict(
         host=kw.get("host", "localhost"),
         port=kw.get("port", 6379),
         db=kw.get("db", 0),
         password=kw.get("password"),
-        # Upstash (the managed Redis behind REDIS_URL on Vercel) only accepts
-        # rediss:// -- plain TCP is refused outright. Mirroring whatever
-        # connection class the sync client above was built with keeps the
-        # async client talking to the same server the same way, instead of
-        # silently downgrading to a scheme Upstash rejects.
-        ssl=is_tls(redis_client),
         decode_responses=True,
-        max_connections=256,
+        max_connections=int(os.getenv("QUEUE_REDIS_MAX_CONNECTIONS", "256")),
+        timeout=float(os.getenv("QUEUE_REDIS_POOL_TIMEOUT", "20")),
     )
+    # Upstash (the managed Redis behind REDIS_URL on Vercel) only accepts
+    # rediss:// -- plain TCP is refused outright. Mirroring whatever
+    # connection class the sync client above was built with keeps the
+    # async client talking to the same server the same way, instead of
+    # silently downgrading to a scheme Upstash rejects.
+    if is_tls(redis_client):
+        pool_kwargs["connection_class"] = aioredis.SSLConnection
+    _aredis = aioredis.Redis(connection_pool=aioredis.BlockingConnectionPool(**pool_kwargs))
 
     app.include_router(router)
     start_admission_worker(redis_client, session_factory)

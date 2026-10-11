@@ -20,14 +20,16 @@ from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from sqlalchemy.exc import DataError, IntegrityError
 from app.database import get_db, Base, engine, SessionLocal
 from app.redisconf import make_redis_client
 from app import models
 from app import migrate
 from app.idempotency import install as install_idempotency
 from app.metrics import install as install_metrics
-from app.queue import install as install_queue
+from app.queue import install as install_queue, async_redis
 from app.admission import install as install_admission
+from app.salewindow import install as install_salewindow
 from app.payments import install as install_payments
 from app.tracing import install as install_tracing
 from app.ml.demand_forecast import get_forecast_sample
@@ -95,12 +97,36 @@ app.add_middleware(
 
 r = make_redis_client()
 
+
+# Bad ids from a client are the client's problem, not a server fault. Before
+# these handlers every foreign-key or malformed-UUID error from a checkout
+# surfaced as an HTTP 500 (verified: unknown user, unknown sale and sale_id=abc
+# all returned 500). Registered as app-level handlers so the checkout
+# handlers themselves stay untouched.
+@app.exception_handler(IntegrityError)
+async def _integrity_error(request, exc):
+    code = getattr(getattr(exc, "orig", None), "pgcode", None)
+    if code == "23503":                       # foreign_key_violation
+        return JSONResponse(status_code=404, content={
+            "status": "failed", "order_id": None, "strategy": "",
+            "message": "Unknown user or sale."})
+    return JSONResponse(status_code=409, content={
+        "status": "failed", "order_id": None, "strategy": "",
+        "message": "The request conflicts with the current state of the data."})
+
+
+@app.exception_handler(DataError)
+async def _data_error(request, exc):
+    return JSONResponse(status_code=400, content={
+        "status": "failed", "order_id": None, "strategy": "",
+        "message": "sale_id and user_id must be valid UUIDs."})
+
 # Optional Idempotency-Key support for /checkout/*. Purely additive: a request
 # without the header behaves exactly as before, and the checkout handlers
 # below are untouched -- this only decides whether a request reaches them.
 # Registered here rather than beside the CORS middleware because it needs the
 # Redis client above. See app/idempotency.py.
-install_idempotency(app, r)
+install_idempotency(app, r, aredis_getter=async_redis)
 
 # Prometheus instrumentation at /metrics. Added AFTER the idempotency
 # middleware so it sits outside it and can see the Idempotent-Replay header
@@ -119,6 +145,12 @@ install_queue(app, r, SessionLocal)
 # middleware can cache a 403 under their key for 24 hours. See the stack note
 # in app/admission.py. The checkout handlers themselves are untouched.
 install_admission(app, r)
+
+# Server-side sale window (start/end). OUTERMOST of the checkout gates: an
+# out-of-window request is refused before it can claim an admission or reach
+# anything durable. Until this existed the window was only a storefront
+# countdown -- the handlers sold at any time. See app/salewindow.py.
+install_salewindow(app, SessionLocal)
 
 # Stripe test-mode payment step, layered on top of an already-confirmed
 # order. New router only -- no middleware, so where this line sits relative
@@ -170,6 +202,13 @@ def log_checkout_attempt(user_id, sale_id, order_id, page_load_time, checkout_ti
             },
         )
         log_db.commit()
+    except Exception:                                          # noqa: BLE001
+        # BEST EFFORT. This runs inside the checkout handlers' `finally:`, and
+        # an exception raised from a `finally` REPLACES the handler's return
+        # value. An unknown sale_id/user_id (or a malformed one) makes this
+        # INSERT violate a foreign key, which used to turn the handler's clean
+        # 404 into an HTTP 500. Telemetry must never decide the response.
+        log_db.rollback()
     finally:
         log_db.close()
 
@@ -401,9 +440,20 @@ def checkout_optimistic(
             {"sid": sale_id},
         ).fetchone()
         if not row:
+            # End the read transaction BEFORE returning: the `finally` below
+            # opens a second connection to write the behaviour log, so a
+            # session still holding its first one makes every early return a
+            # 2-connections-per-request path (see the note on sold-out below).
+            db.rollback()
             return checkout_result("failed", "Sale not found.", strategy="optimistic", http_status=404)
         inv_id, total, reserved, version = row
         if total - reserved <= 0:
+            # Release the connection the SELECT above checked out. Without
+            # this a sold-out request held it while log_checkout_attempt()
+            # asked the pool for another, so a sold-out stampede (exactly
+            # when this path is hot) needs two pooled connections per
+            # request and can exhaust the 30-connection pool against itself.
+            db.rollback()
             return checkout_result("sold_out", "Sold out -- someone beat you to it.",
                                    strategy="optimistic", http_status=409)
         result = db.execute(
