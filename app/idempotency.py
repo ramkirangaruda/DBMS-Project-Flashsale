@@ -30,6 +30,21 @@ WHY A RESERVATION AND NOT JUST GET-THEN-SET
 
     This is scoped to the checkout paths only -- it is a demo-grade
     implementation, not a general-purpose idempotency layer.
+
+WHAT IS *NOT* CACHED  (added after an audit)
+    Originally every response was cached for 24h. That is wrong for outcomes
+    that are explicitly "try again": an optimistic version conflict answers
+    409 "Version conflict -- another buyer got there first. Try again.", and a
+    buyer who does exactly that with the same key would replay the conflict
+    for a day and never be able to buy. Likewise a 5xx is not a result, it is
+    a failure to produce one. See `is_cacheable()`. Terminal outcomes -- an
+    order, "sold out", "sale not found" -- are still cached, which is what
+    makes a duplicate request safe.
+
+REDIS CLIENT
+    Request-path Redis calls go through the async client when one is supplied
+    (`aredis_getter`) so a 10 ms poll loop of waiting duplicates cannot block
+    the event loop; without one it falls back to the sync client.
 """
 import asyncio
 import json
@@ -51,6 +66,23 @@ def _key(raw: str) -> str:
     return f"idempotency:{raw}"
 
 
+def is_cacheable(status_code: int, body: bytes) -> bool:
+    """
+    Should this response be remembered under the Idempotency-Key?
+
+    Terminal outcomes yes; "try again" outcomes no. See the module docstring.
+    """
+    if status_code >= 500 or status_code in (408, 425, 429):
+        return False
+    try:
+        data = json.loads(body)
+    except Exception:                                          # noqa: BLE001
+        return status_code < 400
+    if isinstance(data, dict) and status_code == 409 and data.get("status") == "failed":
+        return False                  # OCC version conflict: retryable by design
+    return True
+
+
 class IdempotencyMiddleware(BaseHTTPMiddleware):
     """
     Args:
@@ -61,10 +93,25 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
             straight through untouched.
     """
 
-    def __init__(self, app, redis_client=None, path_prefixes=DEFAULT_PATH_PREFIXES):
+    def __init__(self, app, redis_client=None, path_prefixes=DEFAULT_PATH_PREFIXES,
+                 aredis_getter=None):
         super().__init__(app)
         self.redis = redis_client
         self.path_prefixes = tuple(path_prefixes)
+        self._aredis_getter = aredis_getter
+
+    # -- redis access: async client when available, sync otherwise ---------
+    async def _get(self, k):
+        ar = self._aredis_getter() if self._aredis_getter else None
+        return await ar.get(k) if ar is not None else self.redis.get(k)
+
+    async def _set(self, k, v, **kw):
+        ar = self._aredis_getter() if self._aredis_getter else None
+        return await ar.set(k, v, **kw) if ar is not None else self.redis.set(k, v, **kw)
+
+    async def _delete(self, k):
+        ar = self._aredis_getter() if self._aredis_getter else None
+        return await ar.delete(k) if ar is not None else self.redis.delete(k)
 
     # -- helpers -----------------------------------------------------------
     def _applies(self, request):
@@ -90,7 +137,7 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         deadline = asyncio.get_event_loop().time() + WAIT_TIMEOUT_S
         while asyncio.get_event_loop().time() < deadline:
             await asyncio.sleep(WAIT_POLL_S)
-            raw = self.redis.get(redis_key)
+            raw = await self._get(redis_key)
             if raw is None:
                 # Winner died and cleaned up; let this request execute instead.
                 return None
@@ -117,7 +164,7 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         redis_key = _key(key)
 
         try:
-            cached = self.redis.get(redis_key)
+            cached = await self._get(redis_key)
         except Exception:                                      # noqa: BLE001
             # Redis unreachable -- fail open. Losing idempotency is strictly
             # better than refusing to sell anything.
@@ -134,8 +181,8 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         # Try to become the executor. NX makes this atomic, so exactly one
         # concurrent retry gets through to the checkout handler.
         try:
-            won = self.redis.set(redis_key, RESERVATION_MARKER,
-                                 nx=True, ex=RESERVATION_TTL_S)
+            won = await self._set(redis_key, RESERVATION_MARKER,
+                                  nx=True, ex=RESERVATION_TTL_S)
         except Exception:                                      # noqa: BLE001
             return await call_next(request)
 
@@ -152,18 +199,22 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
             # Never leave a reservation behind on failure -- a later retry
             # must be able to proceed.
             try:
-                self.redis.delete(redis_key)
+                await self._delete(redis_key)
             except Exception:                                  # noqa: BLE001
                 pass
             raise
 
         try:
-            self.redis.set(
-                redis_key,
-                json.dumps({"status_code": response.status_code,
-                            "body": body.decode("utf-8")}),
-                ex=IDEMPOTENCY_TTL_S,
-            )
+            if is_cacheable(response.status_code, body):
+                await self._set(
+                    redis_key,
+                    json.dumps({"status_code": response.status_code,
+                                "body": body.decode("utf-8")}),
+                    ex=IDEMPOTENCY_TTL_S,
+                )
+            else:
+                # A "try again" outcome: free the key so the retry runs.
+                await self._delete(redis_key)
         except Exception:                                      # noqa: BLE001
             pass
 
@@ -179,9 +230,10 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         )
 
 
-def install(app, redis_client):
+def install(app, redis_client, aredis_getter=None):
     """One-liner used by app/main.py. Keeps the wiring in one place."""
-    app.add_middleware(IdempotencyMiddleware, redis_client=redis_client)
+    app.add_middleware(IdempotencyMiddleware, redis_client=redis_client,
+                       aredis_getter=aredis_getter)
     return app
 
 

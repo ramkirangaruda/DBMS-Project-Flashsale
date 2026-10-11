@@ -21,7 +21,13 @@ RUN grep -v -i '^playwright' requirements.txt > /tmp/req.txt \
     && pip install -r /tmp/req.txt
 
 COPY app ./app
-COPY frontend/dist ./frontend/dist
+# `frontend/dist` is gitignored, so on a fresh clone it does not exist until
+# `npm run build` has been run -- and `COPY frontend/dist` then failed the
+# whole image build before it started. Copying the `frontend/` directory
+# instead works either way (.dockerignore already strips node_modules and
+# src, so only package files and -- when built -- dist go in). Without dist
+# the API still runs; it just serves the "Storefront not built yet" hint.
+COPY frontend ./frontend
 
 EXPOSE 8010
 

@@ -628,6 +628,16 @@ Checkout also honours an optional `Idempotency-Key` header
 cached response instead of placing a second order. Omit it and behaviour is
 unchanged.
 
+## Audit fixes and adaptive admission (added later)
+
+Schema, models and the three checkout handlers are unchanged. Fixes are middleware or minimal:
+- **One admission = one buyer = one purchase** (`app/admission.py`): a token was reusable across accounts (one token bought 5 of 5 units). Now bound to a user, single-flight, spent on success.
+- **Sale window enforced server-side** (`app/salewindow.py`): checkout was accepted before start / after end. Set `SALE_WINDOW_ENFORCED=false` for load tests against an old seed (the seed's window is 10 minutes; re-run `python -m scripts.seed`).
+- **Idempotency**: failed/conflict responses are no longer cached under the key, so a legitimate retry executes.
+- Unknown sale/user ids return 4xx instead of 500; attempt logging is best-effort; optimistic handler rolls back on not-found/sold-out; `payment` route added to `vercel.json`; Dockerfile copies `frontend/`.
+- Queue Redis uses a blocking pool (no "Too many connections" under a 1,000-buyer join burst).
+- **New: AIMD admission control** (`ADMISSION_CONTROL=aimd`), see `docs/aimd_admission.md`. Env vars are listed in `.env.example`.
+
 ## Running the API
 
 ```bash
