@@ -580,6 +580,8 @@ Hidden switches, never shown in the UI: `?strategy=pessimistic|optimistic|redis`
 
 ## The virtual waiting room — read this before calling /checkout by hand
 
+> **Why this is the project's main contribution:** see [`docs/novelty.md`](docs/novelty.md) -- bounding concurrency in front of the database, measured against every fixed locking strategy.
+
 **Checkout is not directly callable.** `app/admission.py` is ASGI middleware
 sitting in front of all three `/checkout/*` endpoints: a POST without a valid
 `X-Admission-Token` is refused with **403** before it ever reaches a handler.
