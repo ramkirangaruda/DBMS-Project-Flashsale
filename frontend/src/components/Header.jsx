@@ -40,7 +40,9 @@ export default function Header({ active }) {
           <Link to="/engines" className={linkClass('engines')}>
             Engine Room
           </Link>
-          <span className="cursor-default text-white/40">Deals</span>
+          <Link to="/architecture" className={linkClass('architecture')}>
+            Architecture
+          </Link>
         </nav>
 
         {/* Visual-only search -- see the component docstring. */}
