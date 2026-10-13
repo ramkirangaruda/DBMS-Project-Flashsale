@@ -43,6 +43,9 @@ export default function Header({ active }) {
           <Link to="/architecture" className={linkClass('architecture')}>
             Architecture
           </Link>
+          <Link to="/database" className={linkClass('database')}>
+            Database
+          </Link>
         </nav>
 
         {/* Visual-only search -- see the component docstring. */}

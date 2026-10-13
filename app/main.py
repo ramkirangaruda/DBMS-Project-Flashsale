@@ -31,6 +31,7 @@ from app.queue import install as install_queue, async_redis
 from app.admission import install as install_admission
 from app.salewindow import install as install_salewindow
 from app.payments import install as install_payments
+from app.dbexplorer import install as install_dbexplorer
 from app.tracing import install as install_tracing
 from app.ml.demand_forecast import get_forecast_sample
 
@@ -167,6 +168,9 @@ install_payments(app, r)
 #
 # Auto-instrumentation only; there is not one hand-written span inside any
 # checkout handler. See app/tracing.py.
+# Read-only table browser behind the storefront's /database page.
+install_dbexplorer(app)
+
 install_tracing(app, engine=engine)
 
 
