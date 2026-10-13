@@ -6,6 +6,7 @@ import Landing from './pages/Landing.jsx'
 import SaleDetail from './pages/SaleDetail.jsx'
 import EngineRoom from './pages/EngineRoom.jsx'
 import Architecture from './pages/Architecture.jsx'
+import Database from './pages/Database.jsx'
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
@@ -15,6 +16,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
         <Route path="/sale/:saleId" element={<SaleDetail />} />
         <Route path="/engines" element={<EngineRoom />} />
         <Route path="/architecture" element={<Architecture />} />
+        <Route path="/database" element={<Database />} />
       </Routes>
     </BrowserRouter>
   </React.StrictMode>,
