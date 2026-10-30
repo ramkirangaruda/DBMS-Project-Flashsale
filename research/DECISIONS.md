@@ -62,3 +62,17 @@ Each entry: date, decision, why, alternatives considered.
 ### D11 (2026-10-30) Tests run against a second Postgres (5436) and Redis (6391) while benchmarks run
 * **Decision:** benchmarks use 5435/6390; the test suite is run with `POSTGRES_PORT=5436 REDIS_PORT=6391`, and the slow end-to-end test (`FA_INTEGRATION=1`) uses API port 8020.
 * **Why:** so that running tests during the overnight grid cannot touch the benchmark sale or its Redis keys. (They still share CPU; tests were kept out of the window while P0 baselines ran, except one quick suite run noted here.)
+
+### D12 (2026-10-30) S-K uses K = 40 for both strategies
+* **Decision:** the static arm in the first pass is `S-K:40` (40 buyers per 500 ms) for pessimistic and optimistic.
+* **Why:** it had the fastest median sell-out of the static arms in the fresh P0 baselines on this machine (`results/fa/p0/`): pessimistic 18.9 s (1,500 units), optimistic 8.3 s (600 units). On the original laptop the best optimistic K was 20; here it is 40, so the choice follows this machine's data.
+* **Alternatives:** K = 20 for optimistic (the documented best on the laptop; slower here: 15.1 s); tuning K for the no-show workload (would give the baseline an oracle the claim window does not have).
+
+### D13 (2026-10-30) Sold-out notice fires when free units reach 0, not when free = 0 AND unresolved = 0
+* **Decision:** `claim_window.is_sold_out(free)` is `free <= 0`. Plan 3.4 also required "no unresolved claims"; that was wrong and is corrected in the plan.
+* **Why:** free = total - reserved. Once it is 0, an unresolved admitted buyer can only lose (sold out) or expire; neither returns a unit. Only a declined payment returns one, and the stock refresh then clears the flag. The smoke run at full size (`results/fa/smoke.jsonl`, first line) showed the cost of the old rule: sold out at 38 s, but 1,313 queued buyers were told only at 69 s, after the last no-show token expired.
+* **Alternatives:** keep the stricter rule (30 s later verdicts for nothing); also wait for pending payments (needed only when payments can fail; flag already self-clears).
+
+### D14 (2026-10-30) Harness caps a buyer's show delay at TTL + 1 s
+* **Decision:** a buyer whose drawn delay exceeds the TTL checks out at TTL + 1 s instead (and gets the same 403 for an expired token).
+* **Why:** same outcome for the buyer and the server; it stops one long-tail buyer from holding a run open until the deadline (seen in the smoke run). Saves grid time only.

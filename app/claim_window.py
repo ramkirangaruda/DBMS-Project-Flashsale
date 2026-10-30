@@ -43,7 +43,7 @@ KEYS (per sale)
     fa:show:{sale}      HASH token -> first checkout attempt (epoch s)
     fa:stats:{sale}     HASH counters (admitted, confirmed, sold_out, expired_unshown, ...)
     fa:state:{sale}     STR  JSON of the leader's last decision (for /queue/control)
-    fa:soldout:{sale}   STR  "1" once free = 0 and nothing is unresolved
+    fa:soldout:{sale}   STR  "1" while free = 0 (every unit reserved)
     queue:notified:{token}  STR  first-notification marker (app/queue.py)
 """
 import asyncio
@@ -102,11 +102,12 @@ def budget(w, unresolved):
     return max(0, int(w) - int(unresolved))
 
 
-def is_sold_out(free, unresolved):
-    """Terminal: nothing left to sell and nobody who could still free a unit.
-    (With payments in play a confirmed order could still be declined and
-    return its unit; the stock refresh clears the flag again if that happens.)"""
-    return free is not None and free <= 0 and unresolved <= 0
+def is_sold_out(free):
+    """Terminal for the queue: every unit is reserved. An admitted buyer who
+    has not resolved yet cannot change that -- they can only lose -- so this
+    does not wait for them. Only a declined payment returns a unit; the stock
+    refresh then shows free > 0 and the leader clears the flag again."""
+    return free is not None and free <= 0
 
 
 def estimate(mode, buyers, now, ttl, fixed_p=None, oracle_p=None, k=PRIOR_K, floor=P_FLOOR):
@@ -260,7 +261,7 @@ def leader_tick(r, sale_id, ttl, now=None):
         w = window(free, p_hat)
         slots = budget(w, unresolved)
 
-    sold_out = is_sold_out(free, unresolved)
+    sold_out = is_sold_out(free)
     pipe = r.pipeline()
     if sold_out:
         pipe.set(SOLDOUT_KEY.format(sale_id=sale_id), "1", ex=KEY_TTL_S)
