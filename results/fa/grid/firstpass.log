@@ -1,0 +1,9 @@
+grid firstpass: 26 done, 334 to go
+[1/334] cw1|pessimistic|0.4|3|1  sold 163/200  lost 0  told 0  t None  ok True  (93s)
+[2/334] cw-naive|pessimistic|0.4|3|1  sold 200/200  lost 39  told 0  t 10.62  ok True  (38s)
+[3/334] cw-censored|pessimistic|0.4|3|1  sold 200/200  lost 39  told 0  t 37.37  ok True  (65s)
+[4/334] cw-oracle|pessimistic|0.4|3|1  sold 200/200  lost 5  told 98  t 14.84  ok True  (40s)
+[5/334] cw1|optimistic|0.4|3|1  sold 162/200  lost 0  told 0  t None  ok True  (92s)
+[6/334] cw-naive|optimistic|0.4|3|1  sold 200/200  lost 38  told 0  t 11.68  ok True  (37s)
+=== resumed 2026-10-30T20:18:33Z after container restart (services restarted) ===
+grid firstpass: 32 done, 328 to go
