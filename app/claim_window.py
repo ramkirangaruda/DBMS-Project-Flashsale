@@ -190,18 +190,16 @@ def outcome_kind(status_code, body_status):
 
 
 async def _on_outcome(ar, sale_id, token, kind):
+    # Resolve each token once: only the request that actually removes it
+    # from the unresolved set counts it and, if confirmed, takes a unit off
+    # the free mirror (a replayed confirmation must not count twice).
+    if not token or not await ar.zrem(U_KEY.format(sale_id=sale_id), token):
+        return
     pipe = ar.pipeline()
-    removed_idx = None
-    if token:
-        pipe.zrem(U_KEY.format(sale_id=sale_id), token)
-        removed_idx = 0
+    pipe.hincrby(STATS_KEY.format(sale_id=sale_id), kind, 1)
     if kind == "confirmed":
         pipe.decr(stock_view.FREE_KEY.format(sale_id=sale_id))
     res = await pipe.execute()
-    # Count each token's resolution once: a confirmed-then-replayed request
-    # must not count twice.
-    if removed_idx is None or res[removed_idx]:
-        await ar.hincrby(STATS_KEY.format(sale_id=sale_id), kind, 1)
     if kind == "confirmed" and res[-1] is not None and int(res[-1]) < 0:
         await ar.set(stock_view.FREE_KEY.format(sale_id=sale_id), 0, ex=KEY_TTL_S)
 
