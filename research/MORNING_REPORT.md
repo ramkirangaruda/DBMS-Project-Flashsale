@@ -31,7 +31,14 @@ Plan: https://claude.ai/artifact/LxT22SaYwRGUTc3Wr79bBm . Every decision with it
 
 ## Broken, unfinished, or uncertain
 
-<!-- ISSUES -->
+* **Two container restarts (D19).** The cloud container was reclaimed twice while the grid ran (about 19:05 and 20:24 UTC), costing about two hours. Services were restarted with the same commands and the grid resumed from its results file. That is why the grid may not have finished all five seeds; n per cell is in every table.
+* **First grid attempt invalid for limiter arms (D15).** A DB-limiter bug made CW arms look much worse than they are (as low as 51% sold). Those rows are archived in `results/fa/grid/firstpass_v1_gatebug.jsonl` and not used anywhere in this report, except the `S-K:40` and `aimd` rows, which never touch the limiter and are carried over with a `carried_from` field.
+* **End-to-end oversell test predates the limiter fix.** `FA_INTEGRATION=1 pytest tests/test_fa_integration.py` passed 10/10 before commit 04b1de3; it was not re-run after, to keep the CPU free for the grid. The unit tests (108) did pass after the fix, and every grid run checks the invariant itself (`invariant_ok`). Re-run it before trusting the branch.
+* **k6 "other_failure".** The local single-replica k6 baseline shows about 420 requests per run classified as other failures. Not investigated. The k6 numbers are not used for any claim about the mechanism.
+* **One machine, no Docker.** 4-core VM, native Postgres and Redis on the compose ports, one API process. Load generator and server share the CPU. Absolute times are not comparable with the laptop results in `docs/`.
+* **Harness shortcuts.** Notification is one status GET (D6); show delay is capped at TTL + 1 s (D14); no payment failures in the first pass (D7); the claim window admits its whole budget at once with no pacing cap (D8).
+* **Protego-style and Breakwater-style are approximations** (D16, D17): lock budget only, and a delay-driven credit pool at the door. Neither is a faithful reimplementation, and each runs at one untuned operating point in one cell (D18).
+
 
 ## The three questions that matter most
 
@@ -39,4 +46,25 @@ Plan: https://claude.ai/artifact/LxT22SaYwRGUTc3Wr79bBm . Every decision with it
 
 ## Reproduce
 
-<!-- REPRODUCE -->
+Services as used here (D1, D11): Postgres 16 on 5435 (benchmarks) and 5436 (tests), Redis on 6390 and 6391, all on the docker-compose credentials. With Docker available, `docker compose up -d db redis` gives the 5435/6390 pair.
+
+```bash
+git checkout research/futility-admission
+pip install -r requirements.txt pytest ruff asyncpg
+python -m scripts.seed
+
+# guard, flags-off proof, unit tests (tests use the second instances)
+POSTGRES_PORT=5436 REDIS_PORT=6391 pytest
+FA_INTEGRATION=1 POSTGRES_PORT=5436 REDIS_PORT=6391 pytest tests/test_fa_integration.py
+
+# first-pass grid (resumable) and its tables
+OTEL_SDK_DISABLED=true SALE_WINDOW_ENFORCED=false python -m scripts.fa_benchmark --grid firstpass
+python -m scripts.fa_analyze results/fa/grid/firstpass.jsonl > results/fa/grid/firstpass_summary.md
+
+# P6 baselines (one cell) and their tables
+OTEL_SDK_DISABLED=true SALE_WINDOW_ENFORCED=false python -m scripts.fa_benchmark --grid p6
+python -m scripts.fa_analyze results/fa/grid/p6.jsonl > results/fa/grid/p6_summary.md
+```
+
+P0 baseline and k6 commands are in [`README.md`](README.md).
+
