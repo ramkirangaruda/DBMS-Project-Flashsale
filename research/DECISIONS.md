@@ -94,3 +94,8 @@ Each entry: date, decision, why, alternatives considered.
 ### D18 (2026-10-30) P6 runs one cell only
 * **Decision:** the P6 baselines run at p_show 0.7, demand ratio 10, both strategies, 5 seeds (40 runs), after the first-pass grid.
 * **Why:** time. That cell is the middle of the no-show range at the high demand ratio, where admission choices matter most. The comparison with the first-pass arms is only valid in that cell.
+
+### D19 (2026-10-30) Container restart during the grid: resumed, not restarted
+* **What happened:** the cloud container restarted at about 19:05 UTC, killing the grid after 6 new runs (Postgres, Redis and all processes stopped; files on disk survived). It was found at the 20:17 check-in.
+* **Decision:** restart the four service instances with the same commands and resume the grid (the harness skips cells already in `firstpass.jsonl`). A marker line was written to `firstpass.log`. Partial results are pushed at every check-in so a later restart cannot lose them.
+* **Consequence:** about 75 minutes lost. The grid runs in seed-major order, so if it is not finished by morning every cell has the same number of seeds (or one fewer); the report states n per cell.
