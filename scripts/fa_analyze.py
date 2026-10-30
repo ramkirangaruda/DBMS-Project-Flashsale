@@ -72,7 +72,8 @@ def main(path):
     for strategy in ("pessimistic", "optimistic"):
         for p in sorted({k[1] for k in groups}):
             for ratio in sorted({k[2] for k in groups}):
-                arms = [a for a in ARM_ORDER if (strategy, p, ratio, a) in groups]
+                present = {k[3] for k in groups if k[:3] == (strategy, p, ratio)}
+                arms = [a for a in ARM_ORDER if a in present] + sorted(present - set(ARM_ORDER))
                 if not arms:
                     continue
                 any_r = groups[(strategy, p, ratio, arms[0])][0]

@@ -14,3 +14,4 @@ grid firstpass: 32 done, 328 to go
 [5/328] cw-censored|pessimistic|0.4|10|1  sold 200/200  lost 172  told 1050  t 45.02  ok True  (71s)
 === resumed 2026-10-30T21:06:07Z after container restart (services restarted) ===
 grid firstpass: 37 done, 323 to go
+[1/323] cw-oracle|pessimistic|0.4|10|1  sold 200/200  lost 5  told 1498  t 18.74  ok True  (44s)
