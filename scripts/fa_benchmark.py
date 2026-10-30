@@ -450,13 +450,13 @@ GRIDS = {
         "stock": 200, "delay": "lognormal:2,1", "p_pay": 1.0, "deadline_s": 90.0},
     # P6 generic baselines, at one first-pass operating point so they can be
     # set against the first-pass arms in the same cells.
-    "p6": dict(
-        arms_by_strategy={
+    "p6": {
+        "arms_by_strategy": {
             "pessimistic": ["protego:50", "protego:100", "protego:250", "breakwater:40"],
             "optimistic": ["protego:50", "protego:100", "protego:250", "breakwater:40"],
         },
-        p_show=[0.7], ratio=[10], seeds=[1, 2, 3, 4, 5],
-        stock=200, delay="lognormal:2,1", p_pay=1.0, deadline_s=90.0),
+        "p_show": [0.7], "ratio": [10], "seeds": [1, 2, 3, 4, 5],
+        "stock": 200, "delay": "lognormal:2,1", "p_pay": 1.0, "deadline_s": 90.0},
 }
 
 
