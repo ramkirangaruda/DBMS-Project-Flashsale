@@ -94,6 +94,13 @@ def arm_env(arm, oracle_p):
         return {**FA_COMMON, "CLAIM_WINDOW": "censored"}
     if arm == "cw-oracle":
         return {**FA_COMMON, "CLAIM_WINDOW": "oracle", "FA_ORACLE_P": f"{oracle_p:.6f}"}
+    if arm.startswith("breakwater:"):
+        # Static admission at K, Breakwater-style credit gate at the door.
+        return {"ADMISSION_CONTROL": "static", "QUEUE_ADMIT_BATCH": arm.split(":")[1],
+                "DB_LIMITER": "breakwater"}
+    if arm.startswith("protego:"):
+        return {"ADMISSION_CONTROL": "aimd", "QUEUE_ADMIT_BATCH": "10",
+                "PROTEGO_LOCK_TIMEOUT_MS": arm.split(":")[1]}
     if arm == "cw-censored-coupled":
         return {"CLAIM_WINDOW": "censored", "ADMISSION_CONTROL": "aimd",
                 "FA_SOLDOUT_NOTIFY": "on", "QUEUE_ADMIT_BATCH": "10"}
@@ -128,6 +135,7 @@ def effective_p(p_show, delay_spec, ttl=TTL_S):
 class Buyer:
     __slots__ = (
         "delay",
+        "drops",
         "i",
         "lats",
         "outcome",
@@ -150,6 +158,7 @@ class Buyer:
         self.outcome = "queued"
         self.lats = []
         self.retries = 0
+        self.drops = 0
 
 
 def make_buyers(n, users, p_show, delay_spec, p_pay, seed):
@@ -237,6 +246,10 @@ async def run_herd(arm, strategy, buyers, stock, deadline_s, notify_soldout, ttl
                     b.outcome = "confirmed"
                 elif st == "sold_out":
                     b.outcome = "sold_out"
+                elif st == "dropped":
+                    b.drops += 1                               # Protego-style drop: retry
+                    await asyncio.sleep(random.uniform(0, 0.02))
+                    continue
                 elif r.status_code == 403:
                     b.outcome = "expired"
                 elif r.status_code == 503:
@@ -343,6 +356,7 @@ def summarise_run(buyers, stock, t_stop, deadline_s, traj, conc, final_ctl, rele
         "still_queued_at_stop": outcomes.get("queued", 0),
         "verdict_s": {"p50": round(pct(verdict, 50), 2), "p95": round(pct(verdict, 95), 2)} if verdict else None,
         "occ_retries": sum(b.retries for b in buyers),
+        "protego_drops": sum(b.drops for b in buyers),
         "checkout_attempts": len(lats),
         "client_latency_ms": {"p50": round(pct(lats, 50), 1), "p95": round(pct(lats, 95), 1),
                               "p99": round(pct(lats, 99), 1)} if lats else None,
@@ -367,7 +381,7 @@ def start_server(env_extra, log_path, ttl=TTL_S):
     env = dict(os.environ, OTEL_SDK_DISABLED="true", ADMISSION_ENFORCED="true",
                QUEUE_ADMIT_INTERVAL="0.5", QUEUE_ADMISSION_TTL=str(ttl), PYTHONPATH=ROOT)
     for k in ("CLAIM_WINDOW", "DB_LIMITER", "FA_TTL_MODE", "FA_SOLDOUT_NOTIFY", "FA_ORACLE_P",
-              "ADMISSION_CONTROL"):
+              "ADMISSION_CONTROL", "PROTEGO_LOCK_TIMEOUT_MS"):
         env.pop(k, None)
     env.update(env_extra)
     port = int(BASE.rsplit(":", 1)[1])
@@ -433,6 +447,15 @@ GRIDS = {
             "optimistic": ["S-K:40", "aimd", "cw1", "cw-naive", "cw-censored", "cw-oracle"],
         },
         "p_show": [0.4, 0.7, 1.0], "ratio": [3, 10], "seeds": [1, 2, 3, 4, 5],
+        "stock": 200, "delay": "lognormal:2,1", "p_pay": 1.0, "deadline_s": 90.0},
+    # P6 generic baselines, at one first-pass operating point so they can be
+    # set against the first-pass arms in the same cells.
+    "p6": {
+        "arms_by_strategy": {
+            "pessimistic": ["protego:50", "protego:100", "protego:250", "breakwater:40"],
+            "optimistic": ["protego:50", "protego:100", "protego:250", "breakwater:40"],
+        },
+        "p_show": [0.7], "ratio": [10], "seeds": [1, 2, 3, 4, 5],
         "stock": 200, "delay": "lognormal:2,1", "p_pay": 1.0, "deadline_s": 90.0},
 }
 

@@ -28,6 +28,16 @@ HOW IT IS ENFORCED
     excluded, so queueing at the gate does not look like a slow database).
 
     DB_LIMITER=aimd turns it on. Default off.
+
+BREAKWATER-STYLE VARIANT (evaluation baseline only)
+    DB_LIMITER=breakwater keeps the same gate but replaces the control law
+    with Breakwater's (OSDI '20) credit update: below the delay target, add
+    `BW_ADDITIVE` credits per step; above it, cut multiplicatively in
+    proportion to the overshoot, credits *= max(1 - beta * (d - target) / d,
+    0.5). The delay signal is the p90 of gate wait + handler time (queueing
+    delay as the server sees it); the target is clamp(BW_TARGET_X x the best
+    p90 seen, BW_TARGET_MIN_MS, ...). It is "Breakwater-style": Breakwater's
+    RPC-layer credits and demand speculation are not reproduced.
 """
 import asyncio
 import json
@@ -38,12 +48,19 @@ from dataclasses import asdict, replace
 from app import admission_control as ac
 
 MODE = os.getenv("DB_LIMITER", "off").strip().lower()
-ENABLED = MODE == "aimd"
+ENABLED = MODE in ("aimd", "breakwater")
+
+BW_ADDITIVE = float(os.getenv("BW_ADDITIVE", "1"))
+BW_BETA = float(os.getenv("BW_BETA", "0.4"))
+BW_TARGET_X = float(os.getenv("BW_TARGET_X", "2.0"))
+BW_TARGET_MIN_MS = float(os.getenv("BW_TARGET_MIN_MS", "20"))
 
 STATE_KEY = "dblim:state"
 LIMIT_KEY = "dblim:limit"
 INFLIGHT_KEY = "dblim:inflight"
 OBS_KEY = "dblim:obs:{sec}"
+BW_OBS_KEY = "dblim:bwobs:{sec}"         # gate wait + handler time (Breakwater-style signal)
+WAITING_KEY = "dblim:waiting"          # requests waiting at the gate right now
 WAIT_KEY = "dblim:wait"                # HASH n, sum_ms, max_ms, timeouts, b<k> histogram
 
 MAX_WAIT_S = float(os.getenv("DBLIM_MAX_WAIT_S", "20"))
@@ -79,25 +96,74 @@ def _bucket(ms):
     return ac.bucket_of(ms)
 
 
+_gate = {"loop": None, "lock": None}
+
+
+def _local_lock():
+    """One FIFO lock per event loop. Only the request holding it polls Redis;
+    everyone else waits on the lock. The first version had every waiter poll
+    Redis every 5 ms, and with hundreds of admitted buyers at the gate that
+    polling saturated the event loop and Redis, inflated every checkout's
+    latency, and drove this very controller's window down to its floor."""
+    loop = asyncio.get_running_loop()
+    if _gate["loop"] is not loop:
+        _gate["loop"], _gate["lock"] = loop, asyncio.Lock()
+    return _gate["lock"]
+
+
+async def _try(ar, init):
+    try:
+        return await ar.eval(_ACQUIRE_LUA, 2, INFLIGHT_KEY, LIMIT_KEY, init)
+    except Exception:                                          # noqa: BLE001
+        return 1                                               # Redis trouble: fail open, as the door does
+
+
 async def acquire(ar):
     """Wait for a slot. Returns (acquired, waited_ms)."""
     started = time.perf_counter()
     deadline = started + MAX_WAIT_S
     init = int(CFG.init_cwnd)
-    while True:
+    lock = _local_lock()
+
+    async def done(ok):
+        waited = (time.perf_counter() - started) * 1000.0
+        await _record_wait(ar, waited, timed_out=not ok)
+        return bool(ok), waited
+
+    if not lock.locked() and await _try(ar, init):
+        return await done(True)
+    # Demand the controller must see: admission_control.step() treats
+    # "nothing measured and nobody waiting" as the end of a drop and resets
+    # the window. For a door-level gate, "waiting" means requests queued
+    # HERE -- the waiting room can be empty while hundreds of admitted
+    # buyers queue at the gate.
+    await _bump_waiting(ar, 1)
+    try:
         try:
-            ok = await ar.eval(_ACQUIRE_LUA, 2, INFLIGHT_KEY, LIMIT_KEY, init)
-        except Exception:                                      # noqa: BLE001
-            ok = 1                                             # Redis trouble: fail open, as the door does
-        if ok:
-            waited = (time.perf_counter() - started) * 1000.0
-            await _record_wait(ar, waited, timed_out=False)
-            return True, waited
-        if time.perf_counter() >= deadline:
-            waited = (time.perf_counter() - started) * 1000.0
-            await _record_wait(ar, waited, timed_out=True)
-            return False, waited
-        await asyncio.sleep(POLL_S)
+            await asyncio.wait_for(lock.acquire(), timeout=max(0.0, deadline - time.perf_counter()))
+        except TimeoutError:
+            return await done(False)
+        try:
+            while True:
+                if await _try(ar, init):
+                    return await done(True)
+                if time.perf_counter() >= deadline:
+                    return await done(False)
+                await asyncio.sleep(POLL_S)
+        finally:
+            lock.release()
+    finally:
+        await _bump_waiting(ar, -1)
+
+
+async def _bump_waiting(ar, delta):
+    try:
+        v = await ar.incrby(WAITING_KEY, delta)
+        await ar.expire(WAITING_KEY, 300)
+        if v is not None and int(v) < 0:
+            await ar.set(WAITING_KEY, 0, ex=300)
+    except Exception:                                          # noqa: BLE001, S110
+        pass
 
 
 async def _record_wait(ar, waited_ms, timed_out):
@@ -123,8 +189,8 @@ async def release(ar):
         pass
 
 
-async def _record(ar, latency_ms, outcome, now):
-    key = OBS_KEY.format(sec=int(now))
+async def _record(ar, latency_ms, outcome, now, key_fmt=OBS_KEY):
+    key = key_fmt.format(sec=int(now))
     pipe = ar.pipeline()
     pipe.hincrby(key, "n", 1)
     if outcome != "ok":
@@ -137,10 +203,12 @@ async def _record(ar, latency_ms, outcome, now):
 _pending = set()
 
 
-def record(ar, latency_ms, outcome, now=None):
+def record(ar, latency_ms, outcome, now=None, waited_ms=0.0):
     async def run():
         try:
             await _record(ar, latency_ms, outcome, now or time.time())
+            if MODE == "breakwater":
+                await _record(ar, latency_ms + waited_ms, outcome, now or time.time(), BW_OBS_KEY)
         except Exception:                                      # noqa: BLE001, S110
             pass
     t = asyncio.ensure_future(run())
@@ -148,8 +216,38 @@ def record(ar, latency_ms, outcome, now=None):
     t.add_done_callback(_pending.discard)
 
 
+# ---------------------------------------------------------------- Breakwater-style law (pure)
+def breakwater_step(st, stats, cfg, now, additive=None, beta=None, target_x=None, target_min_ms=None):
+    """One Breakwater-style credit update. `stats` is a read_window() result
+    over gate wait + handler time. Mutates and returns `st` (an
+    admission_control.State, reused for its fields)."""
+    additive = BW_ADDITIVE if additive is None else additive
+    beta = BW_BETA if beta is None else beta
+    target_x = BW_TARGET_X if target_x is None else target_x
+    target_min_ms = BW_TARGET_MIN_MS if target_min_ms is None else target_min_ms
+    st.last_step_ts = now
+    st.steps += 1
+    n, d = stats["n"], stats["q_ms"]
+    st.last_n, st.last_q_ms = n, d
+    if n < cfg.min_samples or d is None:
+        st.last_signal = "no_data"
+        return st
+    if st.baseline_ms is None or d < st.baseline_ms:
+        st.baseline_ms = d
+    target = max(target_min_ms, target_x * st.baseline_ms)
+    if d <= target:
+        st.cwnd = min(cfg.max_cwnd, st.cwnd + additive)
+        st.last_signal = "increase"
+    else:
+        st.cwnd = max(cfg.min_cwnd, st.cwnd * max(1 - beta * (d - target) / d, 0.5))
+        st.decreases += 1
+        st.last_decrease_ts = now
+        st.last_signal = "delay"
+    return st
+
+
 # ---------------------------------------------------------------- leader side (sync)
-def read_window(r, now, window_s, since=0.0, q=None):
+def read_window(r, now, window_s, since=0.0, q=None, key=None):
     """admission_control.read_window, over this limiter's own observations."""
     q = CFG.quantile if q is None else q
     first = max(int(now) - window_s + 1, int(since) + 1)
@@ -158,7 +256,7 @@ def read_window(r, now, window_s, since=0.0, q=None):
         return {"n": 0, "q_ms": None, "loss": 0.0, "secs": 0}
     pipe = r.pipeline()
     for s in secs:
-        pipe.hgetall(OBS_KEY.format(sec=s))
+        pipe.hgetall((key or OBS_KEY).format(sec=s))
     n = loss = 0
     hist = {}
     for row in pipe.execute():
@@ -186,8 +284,18 @@ def leader_tick(r, queue_depth, now=None, cfg=CFG):
     st = load_state(r)
     if now - st.last_step_ts >= cfg.step_s:
         inflight = max(0, int(r.get(INFLIGHT_KEY) or 0))
-        stats = read_window(r, now, cfg.window_s, since=st.last_decrease_ts, q=cfg.quantile)
-        st = ac.step(st, stats, inflight, queue_depth, cfg, now)
+        # Demand = buyers still in the waiting room + requests queued at the
+        # gate. Passing the waiting room alone (the first overnight grid did)
+        # let step() decide "the drop is over" and reset the limit to its
+        # initial 2 whenever the claim window had emptied the queue, even
+        # with hundreds of checkouts waiting at the gate.
+        queue_depth = queue_depth + max(0, int(r.get(WAITING_KEY) or 0))
+        if MODE == "breakwater":
+            stats = read_window(r, now, cfg.window_s, since=0.0, q=cfg.quantile, key=BW_OBS_KEY)
+            st = breakwater_step(st, stats, cfg, now)
+        else:
+            stats = read_window(r, now, cfg.window_s, since=st.last_decrease_ts, q=cfg.quantile)
+            st = ac.step(st, stats, inflight, queue_depth, cfg, now)
         st.cwnd = min(cfg.max_cwnd, st.cwnd)
         pipe = r.pipeline()
         pipe.set(STATE_KEY, st.to_json())
