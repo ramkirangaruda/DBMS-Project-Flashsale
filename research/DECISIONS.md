@@ -76,3 +76,21 @@ Each entry: date, decision, why, alternatives considered.
 ### D14 (2026-10-30) Harness caps a buyer's show delay at TTL + 1 s
 * **Decision:** a buyer whose drawn delay exceeds the TTL checks out at TTL + 1 s instead (and gets the same 403 for an expired token).
 * **Why:** same outcome for the buyer and the server; it stops one long-tail buyer from holding a run open until the deadline (seen in the smoke run). Saves grid time only.
+
+### D15 (2026-10-30) First grid attempt discarded because of a DB-limiter bug; baseline rows carried over
+* **What happened:** the first attempt at the first-pass grid (74 runs, kept as `results/fa/grid/firstpass_v1_gatebug.{jsonl,log}`) ran with two defects in `app/db_limiter.py`: (1) the leader passed only the waiting-room depth to `admission_control.step()`, so once the claim window had admitted everyone the controller saw "no demand" and reset its window to 2 while hundreds of requests waited at the gate; (2) every waiting request polled Redis every 5 ms, which saturated the event loop and produced gate time-outs. `cw-naive` sold as little as 51% in that attempt.
+* **Decision:** fix both (commit 04b1de3: waiters at the gate count as demand; one poller per process behind a FIFO lock), add regression tests, archive the v1 files unchanged, and restart the grid. The 26 `S-K:40` and `aimd` rows from v1 are copied into the new `firstpass.jsonl` with a `carried_from` field, because those arms never touch the DB limiter and their code path is unchanged by the fix.
+* **Why:** v1 numbers for the limiter arms measure the bug, not the mechanism. Re-running the baseline rows would cost about 25 minutes for identical code.
+* **Caveat:** during v1, a code edit to `app/admission.py` was briefly present in the benchmark worktree (reverted within about 2 minutes; flags-off neutral), and a 9-second Protego test ran on the test instances at 17:50:22 to 17:50:31 UTC, sharing CPU with one grid run. Both affect only v1 rows; the carried baseline rows may include that one run. After that, development moved to a separate worktree.
+
+### D16 (2026-10-30) Protego-style arm
+* **Decision:** `protego:<ms>` = the existing AIMD door (`ADMISSION_CONTROL=aimd`) plus PostgreSQL `lock_timeout` set by a connect listener on the checkout engine only (`app/protego.py`). SQLSTATE 55P03 becomes 503 `{"status": "dropped"}`; the harness retries a dropped buyer like an OCC conflict and counts drops separately. Swept over 50, 100, 250 ms.
+* **Why:** this is the decision already made (lock budget only, only this arm, only the checkout engine). It is "Protego-style", not Protego: there is no per-lock queueing-delay accounting or performance-isolation scheduler.
+
+### D17 (2026-10-30) Breakwater-style arm
+* **Decision:** `breakwater:<K>` = claim window off, waiting room static K, DB limiter in `breakwater` mode: credits grow by 1 per tick while the observed queueing delay at the gate plus checkout latency p90 is under target, and shrink multiplicatively by max(1 - 0.4 (d - t)/d, 0.5) above it; target = max(20 ms, 2 x best observed p90). Cap 30.
+* **Why:** a server-side credit pool driven by queueing delay is Breakwater's core idea; demand speculation, client-side credits and RPC-level overcommitment do not map onto an HTTP checkout and are left out. It is a single operating point (K = 40, beta 0.4), not tuned.
+
+### D18 (2026-10-30) P6 runs one cell only
+* **Decision:** the P6 baselines run at p_show 0.7, demand ratio 10, both strategies, 5 seeds (40 runs), after the first-pass grid.
+* **Why:** time. That cell is the middle of the no-show range at the high demand ratio, where admission choices matter most. The comparison with the first-pass arms is only valid in that cell.
