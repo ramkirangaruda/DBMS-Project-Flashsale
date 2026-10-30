@@ -31,7 +31,7 @@ def test_mode_never_oversells(arm, strategy, db_engine, redis_client, tmp_path):
     cmd = [sys.executable, "-m", "scripts.fa_benchmark", "--arm", arm, "--strategy", strategy,
            "--stock", "20", "--ratio", "4", "--p-show", "0.6", "--delay", "uniform:0.05,1.5",
            "--ttl", "4", "--deadline", "40", "--seed", "3", "--out", str(out)]
-    proc = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True, timeout=300)
+    proc = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True, timeout=300, check=False)
     assert proc.returncode == 0, proc.stdout[-2000:] + proc.stderr[-2000:]
     res = json.loads(out.read_text().splitlines()[-1])
     assert res["invariant_ok"], res
