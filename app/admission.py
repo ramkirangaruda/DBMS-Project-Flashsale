@@ -65,6 +65,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 from app import admission_control as control
+from app import claim_window, db_limiter
 from app.metrics import ADMISSION_REJECTED, CHECKOUT_IN_FLIGHT
 from app.queue import ADMISSION_TTL_S, async_redis, validate
 
@@ -235,6 +236,23 @@ class AdmissionMiddleware(BaseHTTPMiddleware):
         # ~K concurrent requests -- measured here rather than asserted,
         # because this is the only point that sees every admitted request
         # enter and leave.
+        sale_id = request.query_params.get("sale_id")
+        if claimed:
+            # Futility-aware admission: the buyer showed up (first one counts).
+            claim_window.on_show(ar, sale_id, token)
+        gated = False
+        if db_limiter.ENABLED and ar is not None:
+            # Decoupled DB concurrency limit: wait on the event loop for a
+            # slot BEFORE the handler takes a thread. See app/db_limiter.py.
+            gated, _waited_ms = await db_limiter.acquire(ar)
+            if not gated:
+                if claimed:
+                    try:
+                        await release(ar, token, False)
+                    except Exception:                          # noqa: BLE001, S110
+                        pass
+                return _json_response(strategy, "Checkout is busy -- try again shortly.",
+                                      503, {"Retry-After": "1"})
         CHECKOUT_IN_FLIGHT.labels(strategy=strategy).inc()
         measuring = control.ENABLED and ar is not None
         if measuring:
@@ -242,8 +260,11 @@ class AdmissionMiddleware(BaseHTTPMiddleware):
         started = time.perf_counter()
         confirmed = False
         outcome = "error"
+        body_status = None
+        status_code = 500
         try:
             response = await call_next(request)
+            status_code = response.status_code
             body = b"".join([chunk async for chunk in response.body_iterator])
             body_status = _body_status(body)
             confirmed = body_status == "confirmed"
@@ -258,6 +279,11 @@ class AdmissionMiddleware(BaseHTTPMiddleware):
             if measuring:
                 await control.leave(ar)
                 control.record(ar, (time.perf_counter() - started) * 1000.0, outcome)
+            if gated:
+                await db_limiter.release(ar)
+                db_limiter.record(ar, (time.perf_counter() - started) * 1000.0, outcome)
+            if claimed:
+                claim_window.on_outcome(ar, sale_id, token, status_code, body_status)
             if claimed:
                 try:
                     await release(ar, token, confirmed)
