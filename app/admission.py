@@ -294,4 +294,8 @@ class AdmissionMiddleware(BaseHTTPMiddleware):
 def install(app, redis_client):
     """One-liner used by app/main.py. Keeps the wiring in one place."""
     app.add_middleware(AdmissionMiddleware, redis_client=redis_client)
+    # Protego-style baseline (evaluation only; off unless
+    # PROTEGO_LOCK_TIMEOUT_MS is set). See app/protego.py.
+    from app import protego
+    protego.install(app)
     return app
