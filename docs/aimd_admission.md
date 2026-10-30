@@ -58,6 +58,17 @@ Columns: sell-out time (s) / server p95 (ms) / peak concurrent checkouts.
 | static 160 | 47 | 35.2 | 2,493 | 2,019 |
 | **aimd** | 100 | 33.3 | **23.7** | **291** |
 
+**Redis strategy, 3,000 units, 3,449 buyers** (the order row is still written to Postgres, so this path is ~90 orders/s here, not "database-free")
+
+| arm | sell-out s | server p95 ms | peak conc. |
+|---|---|---|---|
+| static 10 | 149.8 | 49.8 | 10 |
+| static 40 | 37.5 | 147 | 79 |
+| static 160 | 36.8 | 9,633 | 2,478 |
+| **aimd** | **33.4** | **95** | 37 |
+
+Only K = 10, 40 and 160 were run for this strategy (K = 20 and 80 were not), so AIMD beating "the best fixed K" here means the best of those three, not a full sweep.
+
 ## What this does and does not show
 * **Claim that holds:** AIMD finds a safe operating point with no tuning. It
   never oversold and never collapsed, and its tail latency is 3x to 10x lower
@@ -82,6 +93,8 @@ python -m scripts.admission_control_benchmark --strategy pessimistic --stock 150
   --out results/aimd_pessimistic_native.json
 python -m scripts.admission_control_benchmark --strategy pessimistic --stock 800 --db-delay-ms 10 \
   --arms static:5,static:10,static:20,static:40,static:80,aimd --repeats 3 --out results/aimd_pessimistic_slowdb.json
+python -m scripts.admission_control_benchmark --strategy redis --stock 3000 \
+  --arms static:10,static:40,static:160,aimd --repeats 3 --out results/aimd_redis_native.json
 python -m scripts.admission_control_benchmark --strategy optimistic --stock 600 \
   --arms static:10,static:20,static:40,static:80,static:160,aimd --repeats 3 --out results/aimd_optimistic_native.json
 ```
