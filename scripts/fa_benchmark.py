@@ -367,8 +367,9 @@ def start_server(env_extra, log_path, ttl=TTL_S):
               "ADMISSION_CONTROL"):
         env.pop(k, None)
     env.update(env_extra)
+    port = int(BASE.rsplit(":", 1)[1])
     code = ("import uvicorn; uvicorn.run('app.main:app', host='127.0.0.1', "
-            "port=8010, log_level='warning')")
+            f"port={port}, log_level='warning')")
     log = open(log_path, "w")                 # noqa: SIM115 -- the server owns it for its lifetime
     proc = subprocess.Popen([sys.executable, "-c", code], cwd=ROOT, env=env,
                             stdout=log, stderr=subprocess.STDOUT)
@@ -384,14 +385,15 @@ def start_server(env_extra, log_path, ttl=TTL_S):
 
 def run_one(cell, users, r):
     """cell: dict(arm, strategy, stock, ratio, p_show, delay, p_pay, seed, deadline_s)."""
-    oracle = effective_p(cell["p_show"], cell["delay"])
+    ttl = cell.get("ttl", TTL_S)
+    oracle = effective_p(cell["p_show"], cell["delay"], ttl)
     env = arm_env(cell["arm"], oracle)
     os.makedirs(os.path.join(ROOT, "results", "fa", "logs"), exist_ok=True)
     log_path = os.path.join(ROOT, "results", "fa", "logs", f"server_{cell['arm'].replace(':', '_')}.log")
     clean_redis(r)
     sh_db("UPDATE flash_sale_events SET start_time = now() - interval '1 hour', "
           "end_time = now() + interval '3 hours' WHERE id = :s", s=SALE_ID)
-    proc = start_server(env, log_path)
+    proc = start_server(env, log_path, ttl=ttl)
     try:
         httpx.post(f"{BASE}/admin/reset-sale/{SALE_ID}", params={"stock": cell["stock"]}, timeout=30)
         httpx.post(f"{BASE}/queue/reset/{SALE_ID}", timeout=30)
@@ -482,6 +484,7 @@ def main():
     p.add_argument("--p-pay", type=float, default=1.0)
     p.add_argument("--seed", type=int, default=1)
     p.add_argument("--deadline", type=float, default=90.0)
+    p.add_argument("--ttl", type=int, default=TTL_S)
     args = p.parse_args()
 
     r = make_redis_client()
@@ -496,7 +499,7 @@ def main():
         else:
             cell = {"arm": args.arm, "strategy": args.strategy, "stock": args.stock, "ratio": args.ratio,
                         "p_show": args.p_show, "delay": args.delay, "p_pay": args.p_pay, "seed": args.seed,
-                        "deadline_s": args.deadline}
+                        "deadline_s": args.deadline, "ttl": args.ttl}
             res = run_one(cell, users, r)
             print(json.dumps({k: v for k, v in res.items() if k != "trajectory"}, indent=1))
             if args.out:
