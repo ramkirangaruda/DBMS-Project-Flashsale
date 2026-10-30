@@ -146,8 +146,8 @@ def test_breakwater_cuts_in_proportion_to_overshoot():
     st2 = _bw()
     st2.baseline_ms = 10.0
     dl.breakwater_step(st2, {"n": 20, "q_ms": 4000.0}, dl.CFG, 1.0,
-                       additive=1, beta=0.4, target_x=2.0, target_min_ms=20)
-    assert st2.cwnd == pytest.approx(5.0)                                  # floored at x 0.5
+                       additive=1, beta=0.9, target_x=2.0, target_min_ms=20)
+    assert st2.cwnd == pytest.approx(5.0)                                  # 1 - 0.9 x 0.995 < 0.5: floored
 
 
 def test_breakwater_holds_without_data_and_respects_bounds():
