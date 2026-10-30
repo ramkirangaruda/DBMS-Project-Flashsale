@@ -35,11 +35,11 @@ def test_budget_counts_unresolved_buyers():
     assert cw.budget(25, 40) == 0
 
 
-def test_sold_out_needs_no_stock_and_nobody_unresolved():
-    assert cw.is_sold_out(0, 0)
-    assert not cw.is_sold_out(0, 3)                    # someone admitted could still free a unit
-    assert not cw.is_sold_out(5, 0)
-    assert not cw.is_sold_out(None, 0)                 # stock unknown: never claim sold out
+def test_sold_out_means_every_unit_reserved():
+    assert cw.is_sold_out(0)
+    assert cw.is_sold_out(-1)
+    assert not cw.is_sold_out(5)
+    assert not cw.is_sold_out(None)                    # stock unknown: never claim sold out
 
 
 def test_parse_mode():
@@ -146,16 +146,14 @@ def test_outcomes_resolve_claims_and_decrement_free(cwr):
     assert stats["confirmed"] == "1" and stats["sold_out"] == "1"
 
 
-def test_sold_out_flag_set_only_when_nothing_unresolved(cwr):
+def test_sold_out_flag_follows_free_units_not_unresolved_claims(cwr):
     r, _kw = cwr
     r.set(stock_view.FREE_KEY.format(sale_id=SALE), 0)
     pipe = r.pipeline()
     cw.track_grants(pipe, SALE, ["a"], 1000.0, 30)
     pipe.execute()
     cw.leader_tick(r, SALE, ttl=30, now=1001.0)
-    assert r.get(cw.SOLDOUT_KEY.format(sale_id=SALE)) is None
-    r.zrem(cw.U_KEY.format(sale_id=SALE), "a")
-    cw.leader_tick(r, SALE, ttl=30, now=1002.0)
+    # "a" is still unresolved, but can only lose: the queue is told now.
     assert r.get(cw.SOLDOUT_KEY.format(sale_id=SALE)) == "1"
     r.set(stock_view.FREE_KEY.format(sale_id=SALE), 1)                # a payment released a unit
     cw.leader_tick(r, SALE, ttl=30, now=1003.0)

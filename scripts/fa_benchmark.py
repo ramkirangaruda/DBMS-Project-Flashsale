@@ -177,7 +177,7 @@ def release_unit(strategy):
 
 
 # ----------------------------------------------------------------- one run
-async def run_herd(arm, strategy, buyers, stock, deadline_s, notify_soldout):
+async def run_herd(arm, strategy, buyers, stock, deadline_s, notify_soldout, ttl=TTL_S):
     ar = aioredis.Redis(host="localhost", port=REDIS_PORT, decode_responses=True)
     limits = httpx.Limits(max_connections=4000, max_keepalive_connections=4000)
     conc = {"now": 0, "peak": 0}
@@ -264,7 +264,10 @@ async def run_herd(arm, strategy, buyers, stock, deadline_s, notify_soldout):
             if not b.show:
                 b.outcome = "noshow"
                 return
-            await asyncio.sleep(b.delay)
+            # A buyer slower than the TTL can only meet an expired token; cap
+            # the wait just past expiry so one long-tail buyer does not hold
+            # the run open until the deadline. Same outcome (403), less idle.
+            await asyncio.sleep(min(b.delay, ttl + 1.0))
             b.t_show = time.perf_counter() - t0
             await checkout(b)
             if b.outcome == "confirmed" and not b.pays:
@@ -403,7 +406,8 @@ def run_one(cell, users, r):
         n = round(cell["stock"] * cell["ratio"])
         buyers = make_buyers(n, users, cell["p_show"], cell["delay"], cell["p_pay"], cell["seed"])
         res = asyncio.run(run_herd(cell["arm"], cell["strategy"], buyers, cell["stock"],
-                                   cell["deadline_s"], notify_soldout=env.get("FA_SOLDOUT_NOTIFY") == "on"))
+                                   cell["deadline_s"], notify_soldout=env.get("FA_SOLDOUT_NOTIFY") == "on",
+                                   ttl=ttl))
         after = sh_db("SELECT count(*) FROM orders WHERE sale_id = :s", s=SALE_ID)[0][0]
         inv = sh_db("SELECT reserved_stock, total_stock FROM inventory WHERE sale_id = :s", s=SALE_ID)[0]
         res["server_latency_ms"] = server_latency(cell["strategy"])
@@ -426,7 +430,7 @@ GRIDS = {
     "firstpass": {
         "arms_by_strategy": {
             "pessimistic": ["S-K:40", "aimd", "cw1", "cw-naive", "cw-censored", "cw-oracle"],
-            "optimistic": ["S-K:20", "aimd", "cw1", "cw-naive", "cw-censored", "cw-oracle"],
+            "optimistic": ["S-K:40", "aimd", "cw1", "cw-naive", "cw-censored", "cw-oracle"],
         },
         "p_show": [0.4, 0.7, 1.0], "ratio": [3, 10], "seeds": [1, 2, 3, 4, 5],
         "stock": 200, "delay": "lognormal:2,1", "p_pay": 1.0, "deadline_s": 90.0},
