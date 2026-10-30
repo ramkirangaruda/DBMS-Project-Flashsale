@@ -392,7 +392,7 @@ def markdown(summaries, args):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--strategy", default="pessimistic", choices=["pessimistic", "optimistic"])
+    p.add_argument("--strategy", default="pessimistic", choices=["pessimistic", "optimistic", "redis"])
     p.add_argument("--stock", type=int, default=1500)
     p.add_argument("--oversubscribe", type=float, default=1.15)
     p.add_argument("--arms", default="static:5,static:20,static:80,static:320,aimd")
