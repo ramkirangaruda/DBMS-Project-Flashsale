@@ -244,7 +244,7 @@ class AdmissionMiddleware(BaseHTTPMiddleware):
         if db_limiter.ENABLED and ar is not None:
             # Decoupled DB concurrency limit: wait on the event loop for a
             # slot BEFORE the handler takes a thread. See app/db_limiter.py.
-            gated, _waited_ms = await db_limiter.acquire(ar)
+            gated, waited_ms = await db_limiter.acquire(ar)
             if not gated:
                 if claimed:
                     try:
@@ -281,7 +281,8 @@ class AdmissionMiddleware(BaseHTTPMiddleware):
                 control.record(ar, (time.perf_counter() - started) * 1000.0, outcome)
             if gated:
                 await db_limiter.release(ar)
-                db_limiter.record(ar, (time.perf_counter() - started) * 1000.0, outcome)
+                db_limiter.record(ar, (time.perf_counter() - started) * 1000.0, outcome,
+                                  waited_ms=waited_ms)
             if claimed:
                 claim_window.on_outcome(ar, sale_id, token, status_code, body_status)
             if claimed:

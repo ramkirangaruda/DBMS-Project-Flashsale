@@ -94,6 +94,10 @@ def arm_env(arm, oracle_p):
         return {**FA_COMMON, "CLAIM_WINDOW": "censored"}
     if arm == "cw-oracle":
         return {**FA_COMMON, "CLAIM_WINDOW": "oracle", "FA_ORACLE_P": f"{oracle_p:.6f}"}
+    if arm.startswith("breakwater:"):
+        # Static admission at K, Breakwater-style credit gate at the door.
+        return {"ADMISSION_CONTROL": "static", "QUEUE_ADMIT_BATCH": arm.split(":")[1],
+                "DB_LIMITER": "breakwater"}
     if arm.startswith("protego:"):
         return {"ADMISSION_CONTROL": "aimd", "QUEUE_ADMIT_BATCH": "10",
                 "PROTEGO_LOCK_TIMEOUT_MS": arm.split(":")[1]}
