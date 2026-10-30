@@ -60,6 +60,7 @@ LIMIT_KEY = "dblim:limit"
 INFLIGHT_KEY = "dblim:inflight"
 OBS_KEY = "dblim:obs:{sec}"
 BW_OBS_KEY = "dblim:bwobs:{sec}"         # gate wait + handler time (Breakwater-style signal)
+WAITING_KEY = "dblim:waiting"          # requests waiting at the gate right now
 WAIT_KEY = "dblim:wait"                # HASH n, sum_ms, max_ms, timeouts, b<k> histogram
 
 MAX_WAIT_S = float(os.getenv("DBLIM_MAX_WAIT_S", "20"))
@@ -95,25 +96,74 @@ def _bucket(ms):
     return ac.bucket_of(ms)
 
 
+_gate = {"loop": None, "lock": None}
+
+
+def _local_lock():
+    """One FIFO lock per event loop. Only the request holding it polls Redis;
+    everyone else waits on the lock. The first version had every waiter poll
+    Redis every 5 ms, and with hundreds of admitted buyers at the gate that
+    polling saturated the event loop and Redis, inflated every checkout's
+    latency, and drove this very controller's window down to its floor."""
+    loop = asyncio.get_running_loop()
+    if _gate["loop"] is not loop:
+        _gate["loop"], _gate["lock"] = loop, asyncio.Lock()
+    return _gate["lock"]
+
+
+async def _try(ar, init):
+    try:
+        return await ar.eval(_ACQUIRE_LUA, 2, INFLIGHT_KEY, LIMIT_KEY, init)
+    except Exception:                                          # noqa: BLE001
+        return 1                                               # Redis trouble: fail open, as the door does
+
+
 async def acquire(ar):
     """Wait for a slot. Returns (acquired, waited_ms)."""
     started = time.perf_counter()
     deadline = started + MAX_WAIT_S
     init = int(CFG.init_cwnd)
-    while True:
+    lock = _local_lock()
+
+    async def done(ok):
+        waited = (time.perf_counter() - started) * 1000.0
+        await _record_wait(ar, waited, timed_out=not ok)
+        return bool(ok), waited
+
+    if not lock.locked() and await _try(ar, init):
+        return await done(True)
+    # Demand the controller must see: admission_control.step() treats
+    # "nothing measured and nobody waiting" as the end of a drop and resets
+    # the window. For a door-level gate, "waiting" means requests queued
+    # HERE -- the waiting room can be empty while hundreds of admitted
+    # buyers queue at the gate.
+    await _bump_waiting(ar, 1)
+    try:
         try:
-            ok = await ar.eval(_ACQUIRE_LUA, 2, INFLIGHT_KEY, LIMIT_KEY, init)
-        except Exception:                                      # noqa: BLE001
-            ok = 1                                             # Redis trouble: fail open, as the door does
-        if ok:
-            waited = (time.perf_counter() - started) * 1000.0
-            await _record_wait(ar, waited, timed_out=False)
-            return True, waited
-        if time.perf_counter() >= deadline:
-            waited = (time.perf_counter() - started) * 1000.0
-            await _record_wait(ar, waited, timed_out=True)
-            return False, waited
-        await asyncio.sleep(POLL_S)
+            await asyncio.wait_for(lock.acquire(), timeout=max(0.0, deadline - time.perf_counter()))
+        except TimeoutError:
+            return await done(False)
+        try:
+            while True:
+                if await _try(ar, init):
+                    return await done(True)
+                if time.perf_counter() >= deadline:
+                    return await done(False)
+                await asyncio.sleep(POLL_S)
+        finally:
+            lock.release()
+    finally:
+        await _bump_waiting(ar, -1)
+
+
+async def _bump_waiting(ar, delta):
+    try:
+        v = await ar.incrby(WAITING_KEY, delta)
+        await ar.expire(WAITING_KEY, 300)
+        if v is not None and int(v) < 0:
+            await ar.set(WAITING_KEY, 0, ex=300)
+    except Exception:                                          # noqa: BLE001, S110
+        pass
 
 
 async def _record_wait(ar, waited_ms, timed_out):
@@ -234,6 +284,12 @@ def leader_tick(r, queue_depth, now=None, cfg=CFG):
     st = load_state(r)
     if now - st.last_step_ts >= cfg.step_s:
         inflight = max(0, int(r.get(INFLIGHT_KEY) or 0))
+        # Demand = buyers still in the waiting room + requests queued at the
+        # gate. Passing the waiting room alone (the first overnight grid did)
+        # let step() decide "the drop is over" and reset the limit to its
+        # initial 2 whenever the claim window had emptied the queue, even
+        # with hundreds of checkouts waiting at the gate.
+        queue_depth = queue_depth + max(0, int(r.get(WAITING_KEY) or 0))
         if MODE == "breakwater":
             stats = read_window(r, now, cfg.window_s, since=0.0, q=cfg.quantile, key=BW_OBS_KEY)
             st = breakwater_step(st, stats, cfg, now)
