@@ -123,3 +123,36 @@ def test_limit_never_exceeds_the_cap(dlr):
     for i in range(5):
         st = dl.leader_tick(r, queue_depth=50, now=3000.2 + i * 1.1)
     assert st.cwnd <= dl.CFG.max_cwnd
+
+
+# ---------------------------------------------------------------- Breakwater-style law
+def _bw(cwnd=10.0):
+    return ac.State(cwnd=cwnd, ssthresh=1000, phase="avoid")
+
+
+def test_breakwater_adds_credits_below_target():
+    st = _bw()
+    dl.breakwater_step(st, {"n": 20, "q_ms": 10.0}, dl.CFG, 1.0,
+                       additive=1, beta=0.4, target_x=2.0, target_min_ms=20)
+    assert st.cwnd == 11 and st.last_signal == "increase" and st.baseline_ms == 10.0
+
+
+def test_breakwater_cuts_in_proportion_to_overshoot():
+    st = _bw()
+    st.baseline_ms = 10.0                                  # target = max(20, 2 x 10) = 20 ms
+    dl.breakwater_step(st, {"n": 20, "q_ms": 40.0}, dl.CFG, 1.0,
+                       additive=1, beta=0.4, target_x=2.0, target_min_ms=20)
+    assert st.cwnd == pytest.approx(10 * (1 - 0.4 * (40 - 20) / 40))       # x 0.8
+    st2 = _bw()
+    st2.baseline_ms = 10.0
+    dl.breakwater_step(st2, {"n": 20, "q_ms": 4000.0}, dl.CFG, 1.0,
+                       additive=1, beta=0.4, target_x=2.0, target_min_ms=20)
+    assert st2.cwnd == pytest.approx(5.0)                                  # floored at x 0.5
+
+
+def test_breakwater_holds_without_data_and_respects_bounds():
+    st = _bw(cwnd=30.0)
+    dl.breakwater_step(st, {"n": 2, "q_ms": 5.0}, dl.CFG, 1.0)
+    assert st.cwnd == 30.0 and st.last_signal == "no_data"
+    dl.breakwater_step(st, {"n": 50, "q_ms": 5.0}, dl.CFG, 2.0)
+    assert st.cwnd == dl.CFG.max_cwnd

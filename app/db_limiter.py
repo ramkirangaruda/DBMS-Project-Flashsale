@@ -28,6 +28,16 @@ HOW IT IS ENFORCED
     excluded, so queueing at the gate does not look like a slow database).
 
     DB_LIMITER=aimd turns it on. Default off.
+
+BREAKWATER-STYLE VARIANT (evaluation baseline only)
+    DB_LIMITER=breakwater keeps the same gate but replaces the control law
+    with Breakwater's (OSDI '20) credit update: below the delay target, add
+    `BW_ADDITIVE` credits per step; above it, cut multiplicatively in
+    proportion to the overshoot, credits *= max(1 - beta * (d - target) / d,
+    0.5). The delay signal is the p90 of gate wait + handler time (queueing
+    delay as the server sees it); the target is clamp(BW_TARGET_X x the best
+    p90 seen, BW_TARGET_MIN_MS, ...). It is "Breakwater-style": Breakwater's
+    RPC-layer credits and demand speculation are not reproduced.
 """
 import asyncio
 import json
@@ -38,12 +48,18 @@ from dataclasses import asdict, replace
 from app import admission_control as ac
 
 MODE = os.getenv("DB_LIMITER", "off").strip().lower()
-ENABLED = MODE == "aimd"
+ENABLED = MODE in ("aimd", "breakwater")
+
+BW_ADDITIVE = float(os.getenv("BW_ADDITIVE", "1"))
+BW_BETA = float(os.getenv("BW_BETA", "0.4"))
+BW_TARGET_X = float(os.getenv("BW_TARGET_X", "2.0"))
+BW_TARGET_MIN_MS = float(os.getenv("BW_TARGET_MIN_MS", "20"))
 
 STATE_KEY = "dblim:state"
 LIMIT_KEY = "dblim:limit"
 INFLIGHT_KEY = "dblim:inflight"
 OBS_KEY = "dblim:obs:{sec}"
+BW_OBS_KEY = "dblim:bwobs:{sec}"         # gate wait + handler time (Breakwater-style signal)
 WAIT_KEY = "dblim:wait"                # HASH n, sum_ms, max_ms, timeouts, b<k> histogram
 
 MAX_WAIT_S = float(os.getenv("DBLIM_MAX_WAIT_S", "20"))
@@ -123,8 +139,8 @@ async def release(ar):
         pass
 
 
-async def _record(ar, latency_ms, outcome, now):
-    key = OBS_KEY.format(sec=int(now))
+async def _record(ar, latency_ms, outcome, now, key_fmt=OBS_KEY):
+    key = key_fmt.format(sec=int(now))
     pipe = ar.pipeline()
     pipe.hincrby(key, "n", 1)
     if outcome != "ok":
@@ -137,10 +153,12 @@ async def _record(ar, latency_ms, outcome, now):
 _pending = set()
 
 
-def record(ar, latency_ms, outcome, now=None):
+def record(ar, latency_ms, outcome, now=None, waited_ms=0.0):
     async def run():
         try:
             await _record(ar, latency_ms, outcome, now or time.time())
+            if MODE == "breakwater":
+                await _record(ar, latency_ms + waited_ms, outcome, now or time.time(), BW_OBS_KEY)
         except Exception:                                      # noqa: BLE001, S110
             pass
     t = asyncio.ensure_future(run())
@@ -148,8 +166,38 @@ def record(ar, latency_ms, outcome, now=None):
     t.add_done_callback(_pending.discard)
 
 
+# ---------------------------------------------------------------- Breakwater-style law (pure)
+def breakwater_step(st, stats, cfg, now, additive=None, beta=None, target_x=None, target_min_ms=None):
+    """One Breakwater-style credit update. `stats` is a read_window() result
+    over gate wait + handler time. Mutates and returns `st` (an
+    admission_control.State, reused for its fields)."""
+    additive = BW_ADDITIVE if additive is None else additive
+    beta = BW_BETA if beta is None else beta
+    target_x = BW_TARGET_X if target_x is None else target_x
+    target_min_ms = BW_TARGET_MIN_MS if target_min_ms is None else target_min_ms
+    st.last_step_ts = now
+    st.steps += 1
+    n, d = stats["n"], stats["q_ms"]
+    st.last_n, st.last_q_ms = n, d
+    if n < cfg.min_samples or d is None:
+        st.last_signal = "no_data"
+        return st
+    if st.baseline_ms is None or d < st.baseline_ms:
+        st.baseline_ms = d
+    target = max(target_min_ms, target_x * st.baseline_ms)
+    if d <= target:
+        st.cwnd = min(cfg.max_cwnd, st.cwnd + additive)
+        st.last_signal = "increase"
+    else:
+        st.cwnd = max(cfg.min_cwnd, st.cwnd * max(1 - beta * (d - target) / d, 0.5))
+        st.decreases += 1
+        st.last_decrease_ts = now
+        st.last_signal = "delay"
+    return st
+
+
 # ---------------------------------------------------------------- leader side (sync)
-def read_window(r, now, window_s, since=0.0, q=None):
+def read_window(r, now, window_s, since=0.0, q=None, key=None):
     """admission_control.read_window, over this limiter's own observations."""
     q = CFG.quantile if q is None else q
     first = max(int(now) - window_s + 1, int(since) + 1)
@@ -158,7 +206,7 @@ def read_window(r, now, window_s, since=0.0, q=None):
         return {"n": 0, "q_ms": None, "loss": 0.0, "secs": 0}
     pipe = r.pipeline()
     for s in secs:
-        pipe.hgetall(OBS_KEY.format(sec=s))
+        pipe.hgetall((key or OBS_KEY).format(sec=s))
     n = loss = 0
     hist = {}
     for row in pipe.execute():
@@ -186,8 +234,12 @@ def leader_tick(r, queue_depth, now=None, cfg=CFG):
     st = load_state(r)
     if now - st.last_step_ts >= cfg.step_s:
         inflight = max(0, int(r.get(INFLIGHT_KEY) or 0))
-        stats = read_window(r, now, cfg.window_s, since=st.last_decrease_ts, q=cfg.quantile)
-        st = ac.step(st, stats, inflight, queue_depth, cfg, now)
+        if MODE == "breakwater":
+            stats = read_window(r, now, cfg.window_s, since=0.0, q=cfg.quantile, key=BW_OBS_KEY)
+            st = breakwater_step(st, stats, cfg, now)
+        else:
+            stats = read_window(r, now, cfg.window_s, since=st.last_decrease_ts, q=cfg.quantile)
+            st = ac.step(st, stats, inflight, queue_depth, cfg, now)
         st.cwnd = min(cfg.max_cwnd, st.cwnd)
         pipe = r.pipeline()
         pipe.set(STATE_KEY, st.to_json())
