@@ -123,3 +123,72 @@ def test_limit_never_exceeds_the_cap(dlr):
     for i in range(5):
         st = dl.leader_tick(r, queue_depth=50, now=3000.2 + i * 1.1)
     assert st.cwnd <= dl.CFG.max_cwnd
+
+
+# ---------------------------------------------------------------- Breakwater-style law
+def _bw(cwnd=10.0):
+    return ac.State(cwnd=cwnd, ssthresh=1000, phase="avoid")
+
+
+def test_breakwater_adds_credits_below_target():
+    st = _bw()
+    dl.breakwater_step(st, {"n": 20, "q_ms": 10.0}, dl.CFG, 1.0,
+                       additive=1, beta=0.4, target_x=2.0, target_min_ms=20)
+    assert st.cwnd == 11 and st.last_signal == "increase" and st.baseline_ms == 10.0
+
+
+def test_breakwater_cuts_in_proportion_to_overshoot():
+    st = _bw()
+    st.baseline_ms = 10.0                                  # target = max(20, 2 x 10) = 20 ms
+    dl.breakwater_step(st, {"n": 20, "q_ms": 40.0}, dl.CFG, 1.0,
+                       additive=1, beta=0.4, target_x=2.0, target_min_ms=20)
+    assert st.cwnd == pytest.approx(10 * (1 - 0.4 * (40 - 20) / 40))       # x 0.8
+    st2 = _bw()
+    st2.baseline_ms = 10.0
+    dl.breakwater_step(st2, {"n": 20, "q_ms": 4000.0}, dl.CFG, 1.0,
+                       additive=1, beta=0.9, target_x=2.0, target_min_ms=20)
+    assert st2.cwnd == pytest.approx(5.0)                                  # 1 - 0.9 x 0.995 < 0.5: floored
+
+
+def test_breakwater_holds_without_data_and_respects_bounds():
+    st = _bw(cwnd=30.0)
+    dl.breakwater_step(st, {"n": 2, "q_ms": 5.0}, dl.CFG, 1.0)
+    assert st.cwnd == 30.0 and st.last_signal == "no_data"
+    dl.breakwater_step(st, {"n": 50, "q_ms": 5.0}, dl.CFG, 2.0)
+    assert st.cwnd == dl.CFG.max_cwnd
+
+
+def test_waiters_at_the_gate_count_as_demand(dlr, monkeypatch):
+    """Regression (overnight grid v1): with the waiting room empty but
+    requests queued at the gate, the limit must not be reset to its initial
+    value as if the drop were over."""
+    r, _kw = dlr
+    st = ac.State(cwnd=16, ssthresh=1000, phase="avoid")
+    r.set(dl.STATE_KEY, st.to_json())
+    r.set(dl.WAITING_KEY, 40)
+    out = dl.leader_tick(r, queue_depth=0, now=5000.0)       # no completions this window
+    assert out.cwnd >= 16 and out.last_signal != "idle"
+    r.set(dl.WAITING_KEY, 0)
+    out = dl.leader_tick(r, queue_depth=0, now=5002.0)       # truly idle now
+    assert out.last_signal == "idle"
+
+
+def test_acquire_tracks_waiters(dlr, monkeypatch):
+    r, kw = dlr
+    r.set(dl.LIMIT_KEY, 1)
+    monkeypatch.setattr(dl, "MAX_WAIT_S", 1.0)
+    seen = {}
+
+    async def go():
+        ar = _ar(kw)
+        await dl.acquire(ar)
+        waiter = asyncio.create_task(dl.acquire(ar))
+        await asyncio.sleep(0.1)
+        seen["during"] = int(await ar.get(dl.WAITING_KEY) or 0)
+        await dl.release(ar)
+        await waiter
+        seen["after"] = int(await ar.get(dl.WAITING_KEY) or 0)
+        await ar.aclose()
+
+    asyncio.run(go())
+    assert seen == {"during": 1, "after": 0}

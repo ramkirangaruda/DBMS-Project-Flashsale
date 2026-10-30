@@ -15,7 +15,7 @@ from tests import flags_off_scenario
 
 GOLDEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden", "flags_off.json")
 
-NEW_FLAGS = ("CLAIM_WINDOW", "DB_LIMITER", "FA_TTL_MODE", "FA_SOLDOUT_NOTIFY")
+NEW_FLAGS = ("CLAIM_WINDOW", "DB_LIMITER", "FA_TTL_MODE", "FA_SOLDOUT_NOTIFY", "PROTEGO_LOCK_TIMEOUT_MS")
 
 
 def test_all_new_flags_default_off():
@@ -30,7 +30,7 @@ def test_flags_off_trace_matches_pre_futility_code(redis_client):
     assert trace == golden
 
 
-@pytest.mark.parametrize("module", ["claim_window", "show_estimator", "stock_view", "db_limiter"])
+@pytest.mark.parametrize("module", ["claim_window", "show_estimator", "stock_view", "db_limiter", "protego"])
 def test_new_modules_report_disabled(module):
     mod = pytest.importorskip(f"app.{module}")
     assert mod.ENABLED is False
