@@ -1,26 +1,25 @@
 # Morning report: futility-aware admission, overnight run of 2026-10-30
 
-> Written at 00:40 UTC from the first-pass grid as it stood (256 of 360 runs: seeds 1 to 3 everywhere, seed 4 in most cells). The grid and then P6 are still running and will land in `results/fa/grid/`. Re-run `fa_analyze` for the final tables; the numbers below may move.
+> Final first-pass numbers (360 of 360 runs, 5 seeds per cell), updated 02:40 UTC. P6 was still running at that time; see the P6 section.
 
 Branch: `research/futility-admission` (pushed; nothing pushed to `main`, no force-push, no history rewritten).
 Plan: https://claude.ai/artifact/LxT22SaYwRGUTc3Wr79bBm . Every decision with its reasons: [`DECISIONS.md`](DECISIONS.md). How to run everything: [`README.md`](README.md).
 
 ## Headline
 
-**The claim window does what it is meant to do on futility and costs a lot of speed.** With the censoring-aware estimator (`cw-censored`) and p_show 0.7 or 1.0, admitted buyers who lose at checkout fall from 218 to 1,791 per sale (S-K:40 and AIMD) to a median of 1 to 7. Zero oversells in all 256 runs. But it loses on every time metric in every cell:
+**The claim window does what it is meant to do on futility, and costs a lot of speed.** With the censoring-aware estimator (`cw-censored`) and p_show 0.7 or 1.0, admitted buyers who lose at checkout fall from 218 to 1,791 per sale (S-K:40 and AIMD) to a median of 0 to 2. Zero oversells in all 360 runs. But it loses on every time metric in every cell:
 
-* **Sell-out time.** S-K:40 sells out in 5.0 to 10.0 s (medians). `cw-censored` takes 32.3 to 46.0 s, `cw-oracle` 17.0 to 30.8 s. AIMD sits between (8.7 to 37.5 s).
-* **Loser verdict.** Median time until a buyer who will not get a unit is told: S-K:40 7.9 to 19.6 s, `cw-censored` 32.4 to 46.1 s. The claim window beats AIMD on this only at demand ratio 10 (e.g. pessimistic p 0.7: 37.3 vs 49.3 s).
-* **Checkout latency.** Client checkout p95 is 2.3 to 10.3 s for `cw-censored` and up to 28 s for `cw-naive` (gate wait from admitting the whole budget at once, D8), against 31 to 595 ms for AIMD.
+* **Sell-out time.** S-K:40 sells out in 5.0 to 10.2 s (medians over 5 seeds). `cw-censored` takes 31.9 to 48.3 s, `cw-oracle` 19.3 to 25.7 s, AIMD 9.3 to 37.9 s.
+* **Loser verdict.** Median time until a buyer who will not get a unit is told: S-K:40 7.9 to 19.6 s, `cw-censored` 31.9 to 45.1 s. The claim window beats AIMD on this only at demand ratio 10 and p_show 0.4 or 0.7 (e.g. pessimistic p 0.7: 38.9 vs 47.5 s), and by under a second at optimistic p 1.0, ratio 10 (32.2 vs 33.1 s).
+* **Checkout latency.** Client checkout p95 is 2.0 to 9.9 s for `cw-censored` and up to 27.8 s for `cw-naive` (gate wait from admitting the whole budget at once, D8), against 32 to 726 ms for AIMD.
 
-Two causes are visible in the data. (1) At p 1.0 the claim window has 95% of units sold by about 13 s, then waits until about 30 s for the last few admitted buyers, whose delays are in the lognormal tail (table "time to 95% sold" in the summary). That is the price of admitting only ceil(free/p) buyers: the last units wait for the slowest admitted buyer or a 30 s TTL expiry. (2) At p 0.4 the estimator sits at its prior p = 1 until the first cohort matures, about 30 s in, so `cw-censored` behaves like `cw1` for the first 30 s.
+Two causes are visible in the data. (1) At p 1.0 the claim window has 95% of units sold by about 12 to 13 s, then waits until about 32 s for the last few admitted buyers, whose show delays are in the lognormal tail (table "time to 95% sold" in the summary). That is the price of admitting only ceil(free/p) buyers: the last units wait for the slowest admitted buyer or a 30 s TTL expiry. (2) At p 0.4 the estimator sits at its prior p = 1 until the first cohort matures, about 30 s in, so `cw-censored` behaves like `cw1` for the first 30 s.
 
-**Where the mechanism loses outright on its own metric:** p 0.4, demand ratio 3, where `cw-censored` loses 41 admitted buyers (same as S-K:40 and AIMD) and takes about 39 s instead of 10. At p 0.4 ratio 10 it loses 251 (pessimistic) and 218 (optimistic) against AIMD's 308 and 304 and S-K's 620, with CIs that overlap AIMD's. The oracle shows what the window could do with a correct p from the start: 4 lost in both cells.
+**Where the mechanism loses outright on its own metric:** p 0.4, demand ratio 3, where `cw-censored` loses 39 (pessimistic) and 29 (optimistic) admitted buyers, against 39 for S-K:40 and AIMD, with overlapping CIs, and takes about 39 to 40 s instead of 10. At p 0.4 ratio 10 it loses 172 and 151 against AIMD's 288 and S-K's 614, with CIs ([30, 379], [27, 375]) that overlap AIMD's. The oracle shows what the window could do with a correct p from the start: 3 to 4 lost in those cells.
 
-**Estimator.** At the end of each run the censoring-aware p_hat is within 0.025 of the true effective show rate in every cell. The naive estimator collapses at p 1.0 and ratio 10 (final p_hat 0.65, and the arm loses 1,061 to 1,105 admitted buyers, about the same as having no window) because it counts buyers who have not shown yet as no-shows.
+**Estimator.** At the end of each run the censoring-aware p_hat is within 0.02 of the true effective show rate in every cell. The naive estimator collapses at p 1.0 and ratio 10 (final p_hat 0.66 and 0.72; the arm loses 1,117 and 1,216 admitted buyers, close to having no window) because it counts buyers who have not shown yet as no-shows.
 
-**cw1 (window with p fixed at 1) is not live with no-shows:** 79.8 to 80.0% sold by the 90 s deadline at p 0.4 and about 99% at p 0.7, as expected.
-
+**cw1 (window with p fixed at 1) is not live with no-shows:** 79.5 to 80.0% sold by the 90 s deadline at p 0.4 and 98.5% at p 0.7, as expected.
 
 ## What got done, by phase
 
@@ -34,56 +33,59 @@ Two causes are visible in the data. (1) At p 1.0 the claim window has 95% of uni
 
 **P4, decoupled DB limiter.** `app/db_limiter.py` gates checkouts at the door and drives its limit with `admission_control.step()` unchanged (cap 30). A bug in the first version (D15) made the first grid attempt invalid for every limiter arm; it was fixed, regression-tested, and the grid restarted.
 
-**P5, first-pass grid.** Arms S-K:40, AIMD (coupled), CW-1, CW-naive, CW-censored, CW-oracle; pessimistic and optimistic; p_show 0.4, 0.7, 1.0; demand ratio 3 and 10; seeds 1 to 5; 200 units, 90 s deadline, TTL 30 s (D7). At 00:40 UTC 256 of 360 runs were done; the grid continues (D19: two container restarts cost about two hours).
+**P5, first-pass grid.** Arms S-K:40, AIMD (coupled), CW-1, CW-naive, CW-censored, CW-oracle; pessimistic and optimistic; p_show 0.4, 0.7, 1.0; demand ratio 3 and 10; seeds 1 to 5; 200 units, 90 s deadline, TTL 30 s (D7). Complete: 360 of 360 runs, finished about 02:20 UTC (D19: two container restarts cost about two hours).
 
 **P6, Protego-style and Breakwater-style.** Code done (`app/protego.py`, `DB_LIMITER=breakwater`, D16, D17). Runs at one cell only (D18). Not run yet when this was written; it starts automatically when the grid finishes, writing `results/fa/grid/p6.jsonl`. No P6 numbers are claimed here.
 
 ## Results
 
-Full tables, every cell, with medians and 95% percentile-bootstrap CIs of the median over seeds (10,000 resamples): [`results/fa/grid/firstpass_summary.md`](../results/fa/grid/firstpass_summary.md), generated by `scripts/fa_analyze.py` from `results/fa/grid/firstpass.jsonl`. With 3 or 4 seeds per cell the CIs are coarse and can only take values seen in the data. Below, the pessimistic strategy (optimistic is in the same file and tells the same story); values copied from that file.
+Full tables, every cell, with medians and 95% percentile-bootstrap CIs of the median over 5 seeds (10,000 resamples): [`results/fa/grid/firstpass_summary.md`](../results/fa/grid/firstpass_summary.md), generated by `scripts/fa_analyze.py` from `results/fa/grid/firstpass.jsonl`. With 5 seeds the CIs are coarse and can only take values seen in the data. Below, the pessimistic strategy (optimistic is in the same file and tells the same story); tables generated with the same `fmt` function.
 
 **Admitted, then lost at checkout (sold out), median [95% CI]**
 
-| p_show, ratio | S-K:40 | AIMD | cw1 | cw-naive | cw-censored | cw-oracle |
+| p_show, ratio | S-K:40 | aimd | cw1 | cw-naive | cw-censored | cw-oracle |
 |---|---|---|---|---|---|---|
-| 0.4, 3 | 41 [29, 48] | 41 [29, 48] | 0 [0, 0] | 41 [27, 47] | 41 [28, 48] | 4 [0, 15] |
-| 0.4, 10 | 620 [579, 626] | 308 [273, 331] | 0 [0, 0] | 614 [578, 623] | 251 [30, 379] | 4 [0, 15] |
-| 0.7, 3 | 218 [215, 230] | 218 [215, 230] | 0 [0, 0] | 217 [214, 226] | 1 [0, 15] | 5 [0, 10] |
-| 0.7, 10 | 1206 [1182, 1217] | 1201 [1161, 1212] | 0 [0, 0] | 1194 [1178, 1202] | 3 [0, 13] | 4 [0, 12] |
-| 1.0, 3 | 397 [395, 398] | 397 [395, 398] | 0 [0, 0] | 395 [394, 397] | 1 [0, 1] | 0 [0, 0] |
-| 1.0, 10 | 1782 [1717, 1794] | 1791 [1787, 1794] | 0 [0, 0] | 1105 [1005, 1766] | 1 [0, 1] | 0 [0, 1] |
+| 0.4, 3 | 39 [24, 48] | 39 [24, 48] | 0 [0, 0] | 39 [24, 47] | 39 [24, 48] | 3 [0, 15] |
+| 0.4, 10 | 614 [562, 626] | 288 [258, 331] | 0 [0, 0] | 606 [561, 623] | 172 [30, 379] | 4 [0, 15] |
+| 0.7, 3 | 218 [215, 230] | 218 [215, 230] | 0 [0, 0] | 218 [214, 226] | 0 [0, 15] | 4 [0, 10] |
+| 0.7, 10 | 1199 [1175, 1217] | 1197 [1161, 1212] | 0 [0, 0] | 1192 [1162, 1202] | 2 [0, 13] | 4 [0, 12] |
+| 1.0, 3 | 398 [395, 398] | 398 [395, 398] | 0 [0, 0] | 395 [394, 397] | 1 [0, 1] | 0 [0, 2] |
+| 1.0, 10 | 1790 [1717, 1794] | 1791 [1787, 1795] | 0 [0, 0] | 1117 [1005, 1766] | 1 [0, 1] | 0 [0, 2] |
 
 **Time to sell out (or the 90 s deadline), s**
 
-| p_show, ratio | S-K:40 | AIMD | cw1 | cw-naive | cw-censored | cw-oracle |
+| p_show, ratio | S-K:40 | aimd | cw1 | cw-naive | cw-censored | cw-oracle |
 |---|---|---|---|---|---|---|
-| 0.4, 3 | 10.0 [9.0, 10.6] | 37.4 [36.3, 38.7] | 90.0 [90.0, 90.0] | 12.1 [10.6, 12.8] | 39.0 [37.4, 39.3] | 18.8 [14.8, 90.0] |
-| 0.4, 10 | 9.4 [8.5, 10.4] | 37.3 [36.2, 38.3] | 90.0 [90.0, 90.0] | 24.3 [22.8, 26.1] | 45.7 [39.5, 47.8] | 19.0 [15.0, 66.4] |
-| 0.7, 3 | 6.2 [6.1, 6.8] | 11.2 [10.2, 12.9] | 90.0 [90.0, 90.0] | 11.6 [10.7, 12.6] | 43.8 [35.1, 90.0] | 17.0 [12.4, 27.9] |
-| 0.7, 10 | 6.3 [6.0, 6.4] | 11.1 [10.0, 12.5] | 90.0 [90.0, 90.0] | 23.0 [20.7, 23.3] | 38.6 [35.9, 90.0] | 22.5 [11.1, 31.4] |
-| 1.0, 3 | 5.0 [4.9, 5.2] | 8.7 [8.6, 9.3] | 36.0 [32.1, 38.0] | 11.2 [10.6, 12.6] | 32.5 [29.7, 35.5] | 30.0 [25.5, 30.8] |
-| 1.0, 10 | 5.4 [5.4, 5.5] | 9.7 [8.6, 11.1] | 36.1 [32.9, 37.1] | 24.2 [17.4, 24.8] | 32.6 [30.7, 35.3] | 28.6 [25.7, 31.0] |
+| 0.4, 3 | 10.2 [9.0, 11.0] | 37.5 [36.3, 39.1] | 90.0 [90.0, 90.0] | 11.8 [10.6, 12.8] | 39.0 [37.4, 39.3] | 20.3 [14.8, 90.0] |
+| 0.4, 10 | 9.5 [8.5, 10.4] | 37.5 [36.2, 38.7] | 90.0 [90.0, 90.0] | 23.8 [20.4, 26.1] | 45.0 [39.5, 47.8] | 19.3 [15.0, 66.4] |
+| 0.7, 3 | 6.2 [6.1, 6.8] | 10.3 [10.2, 12.9] | 90.0 [90.0, 90.0] | 11.6 [10.0, 12.6] | 48.3 [35.1, 90.0] | 21.4 [12.4, 36.7] |
+| 0.7, 10 | 6.3 [6.0, 6.4] | 10.5 [10.0, 12.5] | 90.0 [90.0, 90.0] | 23.0 [20.7, 24.8] | 39.1 [35.9, 90.0] | 22.5 [11.1, 36.7] |
+| 1.0, 3 | 5.0 [4.9, 5.5] | 9.3 [8.6, 10.2] | 32.9 [20.3, 38.0] | 11.2 [10.4, 13.7] | 31.9 [19.7, 35.5] | 25.5 [16.9, 30.8] |
+| 1.0, 10 | 5.4 [4.9, 5.5] | 9.3 [8.6, 11.1] | 32.9 [19.9, 37.1] | 24.2 [17.4, 27.1] | 31.9 [18.6, 35.3] | 25.7 [17.3, 31.0] |
 
-**Loser verdict p50, s** (when a buyer who will not get a unit learns it)
+**Loser verdict p50, s** (when a buyer who will not get a unit learns it; cw1 tells nobody before the deadline at p < 1)
 
-| p_show, ratio | S-K:40 | AIMD | cw-naive | cw-censored | cw-oracle |
-|---|---|---|---|---|---|
-| 0.4, 3 | 12.1 [10.8, 13.1] | 39.6 [38.3, 40.4] | 14.1 [13.0, 15.5] | 40.5 [38.8, 41.3] | 17.4 [14.9, 20.4] |
-| 0.4, 10 | 18.9 [18.2, 29.7] | 67.3 [64.6, 67.3] | 29.0 [27.8, 31.8] | 45.1 [39.7, 47.8] | 19.1 [15.0, 66.5] |
-| 0.7, 3 | 8.4 [8.3, 9.2] | 17.0 [13.2, 31.9] | 12.8 [11.8, 14.0] | 39.4 [35.2, 48.4] | 17.1 [12.6, 27.9] |
-| 0.7, 10 | 17.7 [17.5, 17.7] | 49.3 [45.3, 53.4] | 32.3 [31.6, 34.7] | 37.3 [36.0, 38.6] | 22.6 [11.2, 31.4] |
-| 1.0, 3 | 7.9 [7.8, 8.1] | 12.8 [11.9, 13.7] | 13.7 [13.1, 15.3] | 32.5 [29.8, 35.5] | 30.1 [25.6, 30.8] |
-| 1.0, 10 | 19.1 [17.9, 39.2] | 33.4 [24.7, 41.3] | 32.5 [28.9, 43.1] | 32.7 [30.8, 35.4] | 28.7 [25.8, 31.0] |
+| p_show, ratio | S-K:40 | aimd | cw1 | cw-naive | cw-censored | cw-oracle |
+|---|---|---|---|---|---|---|
+| 0.4, 3 | 12.6 [10.8, 13.1] | 39.8 [38.3, 41.2] | n/a | 13.9 [12.3, 15.5] | 40.5 [38.8, 41.3] | 18.9 [14.9, 63.1] |
+| 0.4, 10 | 19.1 [18.2, 29.7] | 67.3 [64.6, 68.4] | n/a | 28.1 [23.2, 31.8] | 45.1 [39.7, 47.8] | 19.4 [15.0, 66.5] |
+| 0.7, 3 | 8.3 [8.1, 9.2] | 13.9 [13.0, 31.9] | n/a | 12.6 [10.9, 14.0] | 43.9 [35.2, 55.1] | 21.4 [12.6, 36.8] |
+| 0.7, 10 | 17.7 [17.5, 18.0] | 47.5 [45.3, 53.4] | n/a | 32.6 [31.6, 35.3] | 38.9 [36.0, 55.6] | 22.6 [11.2, 36.7] |
+| 1.0, 3 | 7.9 [7.4, 8.1] | 13.0 [11.9, 15.6] | 33.0 [20.4, 38.1] | 13.7 [13.0, 16.7] | 32.0 [19.9, 35.5] | 25.6 [16.9, 30.8] |
+| 1.0, 10 | 17.9 [17.0, 39.2] | 24.7 [24.0, 41.3] | 32.9 [20.0, 37.2] | 32.5 [28.9, 43.1] | 32.0 [18.8, 35.4] | 25.8 [17.3, 31.0] |
 
 **Client checkout p95, ms** (includes the DB-limiter gate wait for the claim-window arms)
 
-| p_show, ratio | S-K:40 | AIMD | cw-naive | cw-censored | cw-oracle |
-|---|---|---|---|---|---|
-| 0.4, 10 | 141 [78, 10115] | 31 [22, 76] | 14022 [12219, 14346] | 9855 [4297, 11417] | 1515 [1167, 1610] |
-| 0.7, 10 | 166 [154, 274] | 36 [33, 47] | 19731 [17244, 20161] | 2980 [2107, 3325] | 4032 [3983, 4195] |
-| 1.0, 10 | 11040 [344, 20875] | 133 [101, 526] | 20988 [18230, 31883] | 4530 [4464, 4723] | 4690 [4483, 4744] |
+| p_show, ratio | S-K:40 | aimd | cw1 | cw-naive | cw-censored | cw-oracle |
+|---|---|---|---|---|---|---|
+| 0.4, 3 | 82 [59, 134] | 63 [46, 140] | 162 [94, 1131] | 2372 [1293, 3623] | 4322 [2067, 4632] | 1453 [1115, 2213] |
+| 0.4, 10 | 120 [78, 10115] | 32 [22, 76] | 192 [146, 979] | 13770 [12011, 14346] | 9837 [4297, 11417] | 1489 [1167, 1610] |
+| 0.7, 3 | 153 [100, 237] | 82 [34, 323] | 2908 [1933, 3174] | 3048 [2241, 5668] | 2829 [1669, 3349] | 4250 [4089, 4511] |
+| 0.7, 10 | 165 [118, 274] | 36 [33, 61] | 2822 [1777, 3041] | 19710 [15007, 20161] | 2980 [2107, 3325] | 4182 [3983, 4200] |
+| 1.0, 3 | 147 [120, 163] | 726 [137, 1639] | 4385 [4296, 4681] | 4720 [4221, 8359] | 4402 [4263, 4571] | 4362 [4065, 4532] |
+| 1.0, 10 | 344 [179, 20875] | 133 [99, 526] | 4529 [74, 4809] | 27331 [18230, 31883] | 4530 [4464, 4723] | 4627 [4263, 4744] |
 
-Seeds per cell: 4 at p 0.4 and most p 0.7 cells, 3 elsewhere (exact n per cell in the summary). Invariant held in 256 of 256 runs. Fresh P0 baselines and the k6 baseline are in `results/fa/p0/` and `results/fa/k6/` and are not repeated here.
+5 seeds in every cell. Invariant held in 360 of 360 runs. Fresh P0 baselines and the k6 baseline are in `results/fa/p0/` and `results/fa/k6/` and are not repeated here.
 
 
 ## Decisions taken overnight
@@ -98,7 +100,7 @@ Each has its reasons and the alternatives in [`DECISIONS.md`](DECISIONS.md). The
 ## Broken, unfinished, or uncertain
 
 * **Time metrics come from trajectories sampled about once a second**, so "time to 95% sold" can be slightly later than the sell-out time in a few cells.
-* **Two container restarts (D19).** The cloud container was reclaimed twice while the grid ran (about 19:05 and 20:24 UTC), costing about two hours. Services were restarted with the same commands and the grid resumed from its results file. That is why the grid may not have finished all five seeds; n per cell is in every table.
+* **Two container restarts (D19).** The cloud container was reclaimed twice while the grid ran (about 19:05 and 20:24 UTC), costing about two hours. Services were restarted with the same commands and the grid resumed from its results file. The grid still finished all five seeds.
 * **First grid attempt invalid for limiter arms (D15).** A DB-limiter bug made CW arms look much worse than they are (as low as 51% sold). Those rows are archived in `results/fa/grid/firstpass_v1_gatebug.jsonl` and not used anywhere in this report, except the `S-K:40` and `aimd` rows, which never touch the limiter and are carried over with a `carried_from` field.
 * **End-to-end oversell test predates the limiter fix.** `FA_INTEGRATION=1 pytest tests/test_fa_integration.py` passed 10/10 before commit 04b1de3; it was not re-run after, to keep the CPU free for the grid. The unit tests (108) did pass after the fix, and every grid run checks the invariant itself (`invariant_ok`). Re-run it before trusting the branch.
 * **k6 "other_failure".** The local single-replica k6 baseline shows about 420 requests per run classified as other failures. Not investigated. The k6 numbers are not used for any claim about the mechanism.
@@ -110,9 +112,9 @@ Each has its reasons and the alternatives in [`DECISIONS.md`](DECISIONS.md). The
 
 ## The three questions that matter most
 
-1. **Is speed a goal or a constraint?** The claim window removes futile admissions but is 3 to 6 times slower to sell out than S-K:40 and gives losers their verdict later. If the paper's claim is "no futile admissions at bounded cost", we need a bound and a mechanism change to meet it, e.g. a pacing cap instead of the all-at-once burst (D8), or admitting a few buyers beyond W as the remaining units age towards the TTL. Which framing do you want before I try either?
+1. **Is speed a goal or a constraint?** The claim window removes futile admissions but is 3 to 6 times slower to sell out than S-K:40 (31.9 to 48.3 s against 5.0 to 10.2 s) and gives losers their verdict later. If the paper's claim is "no futile admissions at bounded cost", we need a bound and a mechanism change to meet it, e.g. a pacing cap instead of the all-at-once burst (D8), or admitting a few buyers beyond W as the remaining units age towards the TTL. Which framing do you want before I try either?
 2. **The 30 s prior period.** The estimator holds p = 1 until a cohort matures, which is most of the damage at p 0.4. Options: start from the previous sale's p_hat, a shorter TTL, or a lower-variance prior. Each changes the mechanism's claims, so this is your call.
-3. **Which latency do we report?** The DB limiter keeps server checkout p95 at hundreds of ms, but client p95 (with gate wait) is seconds. Reviewers will compare with AIMD's 31 to 595 ms client p95. Do we report gate wait as part of checkout latency (as done here), or as queueing time like the waiting room?
+3. **Which latency do we report?** The DB limiter keeps server checkout p95 at hundreds of ms, but client p95 (with gate wait) is seconds. Reviewers will compare with AIMD's 32 to 726 ms client p95. Do we report gate wait as part of checkout latency (as done here), or as queueing time like the waiting room?
 
 
 ## Reproduce
