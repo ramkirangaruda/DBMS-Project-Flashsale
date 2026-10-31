@@ -107,7 +107,7 @@ def plot(summary, title, path_prefix):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    fig, ax = plt.subplots(figsize=(8.0, 5.2), dpi=150)
+    fig, ax = plt.subplots(figsize=(8.0, 5.6), dpi=150)
     fig.patch.set_facecolor("#fcfcfb")
     ax.set_facecolor("#fcfcfb")
 
@@ -124,7 +124,7 @@ def plot(summary, title, path_prefix):
         for a, x, y in zip(arms, xs, ys, strict=True):
             s = summary[a]
             ax.errorbar(x, y, xerr=errs(s["t"]), yerr=errs(s["futile"]), fmt=marker, ms=8, color=colour,
-                        mec="#fcfcfb", mew=2, elinewidth=1, alpha=0.95, zorder=3)
+                        mec="#fcfcfb", mew=2, elinewidth=0.8, alpha=0.9, zorder=3)
             ax.annotate(f"{margin_of(a):g}", (x, y), textcoords="offset points", xytext=(6, 5),
                         fontsize=7.5, color=MUTED)
         ax.plot([], [], color=colour, marker=marker, lw=2, ms=7, label=label)
@@ -135,10 +135,11 @@ def plot(summary, title, path_prefix):
         if arm not in summary:
             continue
         s = summary[arm]
+        # Baselines are told apart by marker shape and the legend (they sit
+        # on top of each other near 1,200 futile, so direct labels collide).
         ax.errorbar(s["t"][0], s["futile"][0], xerr=errs(s["t"]), yerr=errs(s["futile"]), fmt=marker, ms=9,
-                    color=INK, mec="#fcfcfb", mew=1.5, elinewidth=1, zorder=4)
-        ax.annotate(label, (s["t"][0], s["futile"][0]), textcoords="offset points", xytext=(7, -10),
-                    fontsize=8, color=INK)
+                    color=INK, mec="#fcfcfb", mew=1.5, elinewidth=0.8, alpha=0.9, zorder=4)
+        ax.plot([], [], color=INK, marker=marker, ls="none", ms=8, label=label)
 
     ax.set_yscale("symlog", linthresh=10)
     ax.set_xlabel("time to sell out, s (median over 5 seeds; bars: 95% bootstrap CI)", color=INK, fontsize=9)
@@ -148,7 +149,7 @@ def plot(summary, title, path_prefix):
     for sp in ax.spines.values():
         sp.set_color(GRID)
     ax.tick_params(colors=MUTED, labelsize=8)
-    ax.legend(frameon=False, fontsize=8, loc="upper right", labelcolor=INK)
+    ax.legend(frameon=False, fontsize=7.5, loc="upper right", labelcolor=INK, ncol=1)
     fig.text(0.01, 0.01, "Labels on line points are the margin. Lower-left is better.", fontsize=7.5, color=MUTED)
     fig.tight_layout(rect=(0, 0.03, 1, 1))
     for ext in ("png", "svg"):
