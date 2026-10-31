@@ -22,7 +22,11 @@ for i in $(seq 1 60); do curl -sf http://127.0.0.1:8010/api >/dev/null && break;
 curl -sf -X POST "http://127.0.0.1:8010/admin/reset-sale/$SALE?stock=60" >/dev/null
 curl -sf -X POST "http://127.0.0.1:8010/queue/reset/$SALE" >/dev/null
 BEFORE=$(psql -h localhost -p 5435 -U postgres -d flashsale -Atc "select count(*) from orders where sale_id='$SALE'")
-cp results/load/users.json "$(dirname "$SCRIPT")/users.json" 2>/dev/null || true
+# Real user ids from this database (orders.user_id is a foreign key). The
+# committed results/load/users.json came from the docker deployment and most of
+# its ids do not exist here: those buyers got 404 "unknown user or sale" (D26).
+psql -h localhost -p 5435 -U postgres -d flashsale -Atc \
+  "select json_agg(id::text) from (select id from users order by email limit 30) u" > "$(dirname "$SCRIPT")/users.json"
 "$K6" run -q -e BASE_URL=http://127.0.0.1:8010 -e STRATEGY="$STRAT" -e SALE_ID="$SALE" -e N=1000 \
   -e USE_QUEUE=true -e RUN_NONCE="k6local-$(date +%s)" -e SUMMARY_PATH="$OUT" "$@" "$SCRIPT"
 AFTER=$(psql -h localhost -p 5435 -U postgres -d flashsale -Atc "select count(*) from orders where sale_id='$SALE'")
