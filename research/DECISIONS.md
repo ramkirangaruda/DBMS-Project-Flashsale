@@ -100,3 +100,32 @@ Each entry: date, decision, why, alternatives considered.
 * **Decision:** restart the four service instances with the same commands and resume the grid (the harness skips cells already in `firstpass.jsonl`). A marker line was written to `firstpass.log`. Partial results are pushed at every check-in so a later restart cannot lose them.
 * **Second restart:** it happened again at about 20:24 UTC (5 runs in), found at 21:05 and resumed the same way. Both restarts came a few minutes after the session went idle with no tracked task running, so the container appears to be reclaimed when the session is idle even while the grid runs. From 21:06 a tracked background wait keeps the session busy.
 * **Consequence:** about two hours lost in total. The grid runs in seed-major order, so if it is not finished by morning every cell has the same number of seeds (or one fewer); the report states n per cell.
+
+## Round 2 (2026-10-31), after Ramkiran's decisions on the three questions
+
+Ramkiran decided: speed is a constraint with an explicit knob; count each unresolved claim by its posterior show probability given its age, p_i = p_hat (1 - G(a)) / (1 - p_hat G(a)), and admit while sum p_i < F x margin; sweep the margin and plot the frontier (futile admissions vs sell-out time) with S-K, AIMD, Protego and Breakwater as points; add an optional warm prior from the previous sale's p_hat, cold stays default, report both; report both latencies with admission-to-verdict time split into gate wait and DB time; add pacing as its own arm; open a draft PR; k6 only after the window and pacing are in.
+
+### D20 (2026-10-31) Posterior weighting details
+* **Decision:** `FA_WEIGHTING=posterior`. A claim whose buyer has already shown (reached the door) counts 1. An unshown claim counts `posterior_show(p_hat, G(age))`, age measured from its clock start (first notification). New claims count p_hat each, so the budget is the largest n with sum(weights) + (n - 1) p_hat < F x margin. With no G every weight is p_hat and the rule reduces exactly to the count window (unit test).
+* **Why:** the formula is Ramkiran's; the "shown counts 1" rule is needed because a buyer at the gate or retrying an OCC conflict will certainly try, and it matches how the count window treated them.
+
+### D21 (2026-10-31) A third start mode, warm-G, besides cold and warm
+* **Decision:** `FA_PRIOR_P` (warm: the previous sale's final p_hat) and `FA_PRIOR_DELAYS` (warm-G: also its observed show delays, used as G until this sale has a mature cohort). Arms `cwp:<m>` (cold), `cwp:<m>:warm`, `cwp:<m>:warmg`.
+* **Why:** G only exists once a cohort matures, 30 s into the sale, and most sales in this workload sell out before that. A cold or p-only warm start therefore cannot discount any claim by age while it matters; only a seeded G lets the posterior weighting act early. Reporting all three keeps the effect of each seed visible.
+* **"Previous sale" in the harness:** the `cwp:1.0` cold run of the same cell with the previous seed (seed 0 is a seeding-only run). Same workload distribution, different random draw: this is a stationarity assumption that favours warm starts, and is stated as such.
+
+### D22 (2026-10-31) Grants that have not been told yet do not age (new modes only)
+* **What happened:** the first warm-G smoke run admitted all 2,000 buyers (`results/fa/smoke_frontier.jsonl`). Under load the notification path lags (mean grant-to-notification up to 6.9 s), and an untold grant aged from its grant time under the seeded G, so it read as a no-show; p_hat fell to 0.33, the window opened, load rose, notification lagged more.
+* **Decision:** in the posterior and warm modes an untold grant has age 0 until it is notified (or expires untold, when it is a plain no-show as before). Notification times go to a new hash `fa:nt:{sale}`. The original count-window arms keep the pilot's inputs unchanged, so first-pass results stay valid.
+* **Still not enough:** with the fix, warm-G without pacing still over-admitted (1,183 futile of 2,000 admitted in the smoke run). A buyer's show is observed when the request reaches the door, which also lags under load, so the seeded G (from a calm sale) reads late shows as no-shows. With pacing the same arm admitted 277 to 280 with 4 to 7 futile. This is a real fragility of age-based inference when the observation path slows under load; the no-pacing warm-G arm stays in the sweep so it is measured, not hidden.
+
+### D23 (2026-10-31) Pacing
+* **Decision:** `FA_PACING=on`: a token bucket refilled at limit x 1000 / median checkout ms (the DB limiter's own observations over 2 s, Little's law), floor 20 claims/s before data, capped at one limit's worth; the window still caps the total.
+* **Why:** "about the limiter's completion rate", using only what the limiter already measures. The floor is arbitrary and is a parameter.
+
+### D24 (2026-10-31) Frontier grid and metrics
+* **Decision:** pessimistic, demand ratio 10, p_show 0.7 first (`frontier07`, the P6 cell), then 0.4 (`frontier04`), 5 seeds each plus one seeding run. Margins 0.9, 1.0, 1.1, 1.25, 1.5, 2.0, 3.0 for the main arm (`cwp:<m>:warmg:pace`) and the cold unpaced arm; ablations at 2 to 4 margins (count weighting, cold start, p-only warm, no pacing). S-K:40, AIMD, Protego-style 100 ms and Breakwater-style re-run in the same grid so every point carries the new timing data. Every arm runs with `FA_TIMING_HEADERS=on`.
+* **Futile admissions** for the frontier = admitted buyers who showed and did not get a unit: sold out at checkout, token expired while waiting, or turned away at the gate (`futile_admitted`). The first-pass "lost" counted only the first.
+* **Admission-to-verdict** per buyer = grant to final answer, split into notification lag, show delay (the buyer's own think time), gate wait, handler (DB) time and the rest. "System time" = total minus show delay.
+* **Protego at 100 ms:** P6 found no difference between 50, 100 and 250 ms; one point is enough.
+* **Optimistic and p 1.0** are left for later; time.
