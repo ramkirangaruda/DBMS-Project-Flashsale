@@ -39,6 +39,18 @@ ARMS
     cw-censored    claim window, censoring-aware p_hat  + same
     cw-oracle      claim window, true effective p       + same
     cw-censored-coupled   claim window + coupled AIMD window (no DB limiter)
+    cwp:<m>[:warm|:warmg][:pace]
+                   posterior-weighted window (FA_WEIGHTING=posterior), censored
+                   p_hat, FA_MARGIN=m. cold by default; warm seeds p_hat from
+                   the previous sale, warmg also seeds G (its show delays);
+                   pace adds FA_PACING. "Previous sale" = the cwp:1.0 cold run
+                   of the same cell with the previous seed (seed 0 is a
+                   seeding-only run).
+    cwc:<m>[...]   the same with the original count window (every
+                   unresolved claim counts one), for the weighting ablation
+
+    Every arm runs with FA_TIMING_HEADERS=on so each buyer's admission-to-
+    verdict time splits into show delay, gate wait and handler (DB) time.
 
     python -m scripts.fa_benchmark --arm cw-censored --strategy pessimistic \
         --stock 200 --ratio 10 --p-show 0.4 --seed 1
@@ -80,8 +92,34 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", "6390"))
 FA_COMMON = {"DB_LIMITER": "aimd", "FA_SOLDOUT_NOTIFY": "on", "ADMISSION_CONTROL": "static"}
 
 
-def arm_env(arm, oracle_p):
+def arm_env(arm, oracle_p, prior=None):
     """Environment for one arm. Every FA flag not set here stays off."""
+    return {"FA_TIMING_HEADERS": "on", **_arm_env(arm, oracle_p, prior)}
+
+
+def parse_cwp(arm):
+    """'cwp:1.25:warmg:pace' -> (1.25, 'warmg', True)."""
+    parts = arm.split(":")
+    margin = float(parts[1])
+    start = next((x for x in parts[2:] if x in ("cold", "warm", "warmg")), "cold")
+    return margin, start, "pace" in parts[2:]
+
+
+def _arm_env(arm, oracle_p, prior):
+    if arm.startswith(("cwp:", "cwc:")):
+        margin, start, pace = parse_cwp(arm)
+        env = {**FA_COMMON, "CLAIM_WINDOW": "censored", "FA_MARGIN": str(margin)}
+        if arm.startswith("cwp:"):
+            env["FA_WEIGHTING"] = "posterior"
+        if start != "cold":
+            if not prior:
+                raise ValueError(f"{arm} needs a previous sale's prior")
+            env["FA_PRIOR_P"] = f"{prior['p_hat']:.6f}"
+            if start == "warmg":
+                env["FA_PRIOR_DELAYS"] = prior["delays_path"]
+        if pace:
+            env["FA_PACING"] = "on"
+        return env
     if arm.startswith("S-K:"):
         return {"ADMISSION_CONTROL": "static", "QUEUE_ADMIT_BATCH": arm.split(":")[1]}
     if arm == "aimd":
@@ -136,6 +174,8 @@ class Buyer:
     __slots__ = (
         "delay",
         "drops",
+        "gate_ms",
+        "handler_ms",
         "i",
         "lats",
         "outcome",
@@ -159,6 +199,8 @@ class Buyer:
         self.lats = []
         self.retries = 0
         self.drops = 0
+        self.gate_ms = 0.0
+        self.handler_ms = 0.0
 
 
 def make_buyers(n, users, p_show, delay_spec, p_pay, seed):
@@ -237,6 +279,11 @@ async def run_herd(arm, strategy, buyers, stock, deadline_s, notify_soldout, ttl
                 finally:
                     conc["now"] -= 1
                 b.lats.append((time.perf_counter() - t) * 1000)
+                try:
+                    b.gate_ms += float(r.headers.get("X-FA-Gate-Ms") or 0.0)
+                    b.handler_ms += float(r.headers.get("X-FA-Handler-Ms") or 0.0)
+                except ValueError:
+                    pass
                 try:
                     j = r.json()
                 except Exception:                              # noqa: BLE001
@@ -339,6 +386,9 @@ def summarise_run(buyers, stock, t_stop, deadline_s, traj, conc, final_ctl, rele
     cw = (final_ctl.get("claim_window") or {}).get(SALE_ID) or {}
     dl = final_ctl.get("db_limiter") or {}
     wait = dl.get("wait") or {}
+    # Admitted buyers who showed and could not get a unit, however they lost:
+    # sold out at checkout, token expired while waiting, or turned away at the gate.
+    futile = [b for b in shown if b.outcome in ("sold_out", "expired", "gate_timeout")]
     return {
         "buyers": len(buyers), "stock": stock,
         "sold": sold, "sold_pct": round(100 * sold / stock, 1),
@@ -365,8 +415,36 @@ def summarise_run(buyers, stock, t_stop, deadline_s, traj, conc, final_ctl, rele
                       "timeouts": int(wait.get("timeouts", 0))} if wait else None,
         "cw_final": cw, "db_limiter_final_limit": dl.get("limit"),
         "payment_releases": len(releases),
+        "futile_admitted": len(futile),
+        "a2v": {"winners": a2v_summary(kept), "losers": a2v_summary(futile)},
         "trajectory": traj,
     }
+
+
+def a2v_summary(bs):
+    """Admission-to-verdict for these buyers (grant to final answer), and its
+    parts: notification (grant to status call), show delay (the buyer's own
+    think time), gate wait and handler time summed over attempts, and the
+    rest (network, client, retry back-off)."""
+    bs = [b for b in bs if b.t_grant is not None and b.t_done is not None and b.t_show is not None]
+    if not bs:
+        return None
+    tot = [b.t_done - b.t_grant for b in bs]
+    parts = {
+        "notify_s": [b.t_notified - b.t_grant for b in bs],
+        "show_delay_s": [b.t_show - b.t_notified for b in bs],
+        "gate_s": [b.gate_ms / 1000.0 for b in bs],
+        "handler_s": [b.handler_ms / 1000.0 for b in bs],
+    }
+    rest = [t - sum(v[i] for v in parts.values()) for i, t in enumerate(tot)]
+    out = {"n": len(bs), "total_p50": round(pct(tot, 50), 3), "total_p95": round(pct(tot, 95), 3),
+           "total_mean": round(sum(tot) / len(tot), 3)}
+    for k, v in {**parts, "rest_s": rest}.items():
+        out[k + "_mean"] = round(sum(v) / len(v), 3)
+        out[k + "_p50"] = round(pct(v, 50), 3)
+    out["system_s_mean"] = round(out["total_mean"] - out["show_delay_s_mean"], 3)
+    out["system_s_p50"] = round(pct([t - d for t, d in zip(tot, parts["show_delay_s"], strict=True)], 50), 3)
+    return out
 
 
 # ----------------------------------------------------------------- server
@@ -381,7 +459,8 @@ def start_server(env_extra, log_path, ttl=TTL_S):
     env = dict(os.environ, OTEL_SDK_DISABLED="true", ADMISSION_ENFORCED="true",
                QUEUE_ADMIT_INTERVAL="0.5", QUEUE_ADMISSION_TTL=str(ttl), PYTHONPATH=ROOT)
     for k in ("CLAIM_WINDOW", "DB_LIMITER", "FA_TTL_MODE", "FA_SOLDOUT_NOTIFY", "FA_ORACLE_P",
-              "ADMISSION_CONTROL", "PROTEGO_LOCK_TIMEOUT_MS"):
+              "ADMISSION_CONTROL", "PROTEGO_LOCK_TIMEOUT_MS", "FA_WEIGHTING", "FA_MARGIN",
+              "FA_PRIOR_P", "FA_PRIOR_DELAYS", "FA_PACING", "FA_TIMING_HEADERS"):
         env.pop(k, None)
     env.update(env_extra)
     port = int(BASE.rsplit(":", 1)[1])
@@ -400,11 +479,20 @@ def start_server(env_extra, log_path, ttl=TTL_S):
     raise RuntimeError(f"server did not start; see {log_path}")
 
 
-def run_one(cell, users, r):
+def sale_prior(r, final_ctl_state):
+    """What a later sale may learn from this one: its final p_hat and every
+    show delay the server observed (show time minus clock start)."""
+    t0 = r.hgetall(f"fa:t0:{SALE_ID}")
+    shows = r.hgetall(f"fa:show:{SALE_ID}")
+    delays = sorted(round(float(shows[k]) - float(t0[k]), 3) for k in shows if k in t0)
+    return {"p_hat": (final_ctl_state or {}).get("p_hat"), "delays": delays}
+
+
+def run_one(cell, users, r, prior=None):
     """cell: dict(arm, strategy, stock, ratio, p_show, delay, p_pay, seed, deadline_s)."""
     ttl = cell.get("ttl", TTL_S)
     oracle = effective_p(cell["p_show"], cell["delay"], ttl)
-    env = arm_env(cell["arm"], oracle)
+    env = arm_env(cell["arm"], oracle, prior)
     os.makedirs(os.path.join(ROOT, "results", "fa", "logs"), exist_ok=True)
     log_path = os.path.join(ROOT, "results", "fa", "logs", f"server_{cell['arm'].replace(':', '_')}.log")
     clean_redis(r)
@@ -430,6 +518,11 @@ def run_one(cell, users, r):
         # Never oversell: the database must not hold more reservations than stock.
         res["invariant_ok"] = inv[0] <= inv[1] and res["sold"] <= cell["stock"]
         res["oracle_p"] = round(oracle, 4)
+        if env.get("CLAIM_WINDOW"):
+            res["prior_out"] = sale_prior(r, (res.get("cw_final") or {}).get("state"))
+        if prior:
+            res["prior_in"] = {"p_hat": prior["p_hat"], "n_delays": len(prior["delays"]),
+                               "from": prior["from"]}
         res["cell"] = cell
         res["finished_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
         return res
@@ -459,6 +552,26 @@ GRIDS = {
         "stock": 200, "delay": "lognormal:2,1", "p_pay": 1.0, "deadline_s": 90.0},
 }
 
+# The frontier (Ramkiran's decision 1): sweep the posterior window's margin
+# and set every other arm, re-run here with timing headers, as points on the
+# same plot. Seed 0 is a seeding-only sale for the warm arms of seed 1.
+MARGINS = [0.9, 1.0, 1.1, 1.25, 1.5, 2.0, 3.0]
+FRONTIER_ARMS = ([f"cwp:{m}:warmg:pace" for m in MARGINS]                 # the mechanism
+                 + [f"cwp:{m}" for m in MARGINS]                           # cold, unpaced
+                 + [f"cwc:{m}:warmg:pace" for m in (1.0, 1.25, 1.5, 2.0)]  # ablation: count weighting
+                 + [f"cwp:{m}:pace" for m in (1.0, 1.25, 1.5)]             # ablation: cold start
+                 + [f"cwp:{m}:warm:pace" for m in (1.0, 1.25, 1.5)]        # ablation: warm p_hat only
+                 + [f"cwp:{m}:warmg" for m in (1.0, 1.5)]                  # ablation: no pacing
+                 + ["cw-oracle", "S-K:40", "aimd", "protego:100", "breakwater:40"])
+for _name, _p in (("frontier07", 0.7), ("frontier04", 0.4), ("frontier10", 1.0)):
+    GRIDS[_name] = {
+        "arms_by_strategy": {"pessimistic": FRONTIER_ARMS},
+        "seed0_arms": ["cwp:1.0"],
+        "p_show": [_p], "ratio": [10], "seeds": [0, 1, 2, 3, 4, 5],
+        "stock": 200, "delay": "lognormal:2,1", "p_pay": 1.0, "deadline_s": 90.0}
+
+PRIOR_SOURCE_ARM = "cwp:1.0"
+
 
 def cell_key(c):
     return f"{c['arm']}|{c['strategy']}|{c['p_show']}|{c['ratio']}|{c['seed']}"
@@ -471,11 +584,37 @@ def grid_cells(name):
         for p in g["p_show"]:
             for ratio in g["ratio"]:
                 for strategy, arms in g["arms_by_strategy"].items():
+                    if seed == 0 and "seed0_arms" in g:
+                        arms = g["seed0_arms"]
                     for arm in arms:
                         cells.append({"arm": arm, "strategy": strategy, "stock": g["stock"], "ratio": ratio,
                                           "p_show": p, "delay": g["delay"], "p_pay": g["p_pay"], "seed": seed,
                                           "deadline_s": g["deadline_s"]})
     return cells
+
+
+def find_prior(out_path, cell):
+    """The previous sale for a warm arm: the PRIOR_SOURCE_ARM run of the same
+    cell with the previous seed, as recorded in this grid's results file."""
+    want = cell_key({**cell, "arm": PRIOR_SOURCE_ARM, "seed": cell["seed"] - 1})
+    with open(out_path) as f:
+        for line in f:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            if cell_key(row["cell"]) == want and row.get("prior_out"):
+                pr = row["prior_out"]
+                d = os.path.join(ROOT, "results", "fa", "priors")
+                os.makedirs(d, exist_ok=True)
+                path = os.path.join(d, want.replace("|", "_").replace(":", "_") + ".json")
+                with open(path, "w") as g:
+                    json.dump(pr["delays"], g)
+                return {"p_hat": pr["p_hat"], "delays": pr["delays"], "delays_path": path, "from": want}
+    raise RuntimeError(f"no prior run {want} in {out_path}")
+
+
+def needs_prior(arm):
+    return arm.startswith(("cwp:", "cwc:")) and parse_cwp(arm)[1] != "cold"
 
 
 def run_grid(name, out_path, users, r, limit=None):
@@ -489,11 +628,13 @@ def run_grid(name, out_path, users, r, limit=None):
     print(f"grid {name}: {len(done)} done, {len(cells)} to go", flush=True)
     for i, cell in enumerate(cells[:limit] if limit else cells):
         t = time.time()
-        res = run_one(cell, users, r)
+        prior = find_prior(out_path, cell) if needs_prior(cell["arm"]) else None
+        res = run_one(cell, users, r, prior)
         with open(out_path, "a") as f:
             f.write(json.dumps(res) + "\n")
         print(f"[{i + 1}/{len(cells)}] {cell_key(cell)}  sold {res['sold']}/{cell['stock']}  "
-              f"lost {res['admitted_lost']}  told {res['told_sold_out']}  t {res['t_sellout_s']}  "
+              f"lost {res['admitted_lost']}  futile {res['futile_admitted']}  told {res['told_sold_out']}  "
+              f"t {res['t_sellout_s']}  "
               f"ok {res['invariant_ok']}  ({time.time() - t:.0f}s)", flush=True)
 
 

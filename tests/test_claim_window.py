@@ -241,6 +241,8 @@ def test_posterior_leader_reopens_the_window_as_unshown_claims_age(cwr, monkeypa
     r.set(stock_view.FREE_KEY.format(sale_id=SALE), 4)
     pipe = r.pipeline()
     cw.track_grants(pipe, SALE, ["a", "b", "c", "d"], 1000.0, 30)
+    for t in "abcd":
+        cw.note_notified(pipe, SALE, t, 1000.0, 30)
     pipe.execute()
     assert cw.leader_tick(r, SALE, ttl=30, now=1000.5) == 0       # four fresh claims cover four units
     # Five seconds on, nobody has shown: under the seeded G every one of them
@@ -263,3 +265,24 @@ def test_pacing_caps_a_tick_at_the_bucket(cwr, monkeypatch):
     assert 0 < first < 100                             # one limit's worth, not the whole window
     st = json.loads(r.get(cw.STATE_KEY.format(sale_id=SALE)))
     assert st["paced"] == first
+
+
+def test_untold_grants_do_not_age(cwr, monkeypatch):
+    # Same as above, but nobody has been told yet: they cannot have shown, so
+    # five seconds of silence is no evidence and the window stays closed.
+    r, _kw = cwr
+    monkeypatch.setattr(cw, "WEIGHTING", "posterior")
+    monkeypatch.setattr(cw, "PRIOR_DELAYS", [1.0, 2.0, 3.0, 4.0])
+    r.set(stock_view.FREE_KEY.format(sale_id=SALE), 4)
+    pipe = r.pipeline()
+    cw.track_grants(pipe, SALE, ["a", "b", "c", "d"], 1000.0, 30)
+    pipe.execute()
+    assert cw.leader_tick(r, SALE, ttl=30, now=1005.0) == 0
+    st = json.loads(r.get(cw.STATE_KEY.format(sale_id=SALE)))
+    assert st["p_hat"] == 1.0 and st["weight_sum"] == 4.0
+
+
+def test_untold_at_age_zero():
+    t0 = {"told": "100.0", "untold": "100.0", "untold_expired": "60.0"}
+    out = cw.untold_at_age_zero(t0, {"told": "100.0"}, 105.0, 30)
+    assert out == {"told": 100.0, "untold": 105.0, "untold_expired": 60.0}
