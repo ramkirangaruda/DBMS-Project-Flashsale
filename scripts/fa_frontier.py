@@ -35,6 +35,8 @@ def sellout(r):
 
 def stat(xs):
     xs = [x for x in xs if x is not None]
+    if not xs:
+        return None
     m = statistics.median(xs)
     lo, hi = boot_ci(xs) if len(xs) > 1 else (m, m)
     return m, lo, hi
