@@ -117,6 +117,7 @@ SHOW_KEY = "fa:show:{sale_id}"
 STATS_KEY = "fa:stats:{sale_id}"
 STATE_KEY = "fa:state:{sale_id}"
 SOLDOUT_KEY = "fa:soldout:{sale_id}"
+NOTIFIED_AT_KEY = "fa:nt:{sale_id}"     # HASH token -> first notification (posterior/warm modes read it)
 KEY_TTL_S = 3600
 
 
@@ -220,6 +221,20 @@ def estimate_state(mode, buyers, now, ttl, fixed_p=None, oracle_p=None, k=PRIOR_
     return estimate(mode, buyers, now, ttl, fixed_p=fixed_p, oracle_p=oracle_p, k=k, floor=floor), prior_delays
 
 
+def untold_at_age_zero(t0, notified, now, ttl):
+    """A granted buyer who has not been told yet cannot have shown, so their
+    show clock has not started: give them age 0 (clock start = now) until
+    they are notified, or until their token expires untold (then they are a
+    plain no-show, as before). Without this, a slow notification path makes
+    fresh grants look like no-shows under any G, p_hat collapses, and the
+    window opens wider exactly when the server is slowest."""
+    out = {}
+    for token, start in t0.items():
+        start = float(start)
+        out[token] = now if (token not in notified and now - start < ttl) else start
+    return out
+
+
 def buyers_from_hashes(t0, shows):
     """Turn the two Redis hashes into the (clock_start, delay) pairs the
     estimator takes."""
@@ -250,6 +265,8 @@ def note_notified(pipe, sale_id, token, now, ttl):
         return
     pipe.zadd(U_KEY.format(sale_id=sale_id), {token: now + ttl}, xx=True)
     pipe.hset(T0_KEY.format(sale_id=sale_id), token, now)
+    pipe.hset(NOTIFIED_AT_KEY.format(sale_id=sale_id), token, now)
+    pipe.expire(NOTIFIED_AT_KEY.format(sale_id=sale_id), KEY_TTL_S)
 
 
 # ---------------------------------------------------------------- door side (app/admission.py, async)
@@ -351,11 +368,15 @@ def leader_tick(r, sale_id, ttl, now=None):
     t0 = shows = None
     if now - last_t >= ESTIMATE_EVERY_S:
         buyers = []
+        cold_count = PRIOR_P == 1.0 and PRIOR_DELAYS is None and not posterior
         if MODE in ("naive", "censored") or posterior:
             t0 = r.hgetall(T0_KEY.format(sale_id=sale_id))
             shows = r.hgetall(SHOW_KEY.format(sale_id=sale_id))
+            if not cold_count:
+                # New modes only; the original arms keep the pilot's inputs.
+                t0 = untold_at_age_zero(t0, r.hgetall(NOTIFIED_AT_KEY.format(sale_id=sale_id)), now, ttl)
             buyers = buyers_from_hashes(t0, shows)
-        if PRIOR_P == 1.0 and PRIOR_DELAYS is None and not posterior:
+        if cold_count:
             p_hat = estimate(MODE, buyers, now, ttl, fixed_p=FIXED_P, oracle_p=oracle_p())
         else:
             p_hat, delays = estimate_state(MODE, buyers, now, ttl, fixed_p=FIXED_P, oracle_p=oracle_p(),
@@ -369,7 +390,8 @@ def leader_tick(r, sale_id, ttl, now=None):
         w, slots = 0, 0
     elif posterior:
         if t0 is None:
-            t0 = r.hgetall(T0_KEY.format(sale_id=sale_id))
+            t0 = untold_at_age_zero(r.hgetall(T0_KEY.format(sale_id=sale_id)),
+                                    r.hgetall(NOTIFIED_AT_KEY.format(sale_id=sale_id)), now, ttl)
             shows = r.hgetall(SHOW_KEY.format(sale_id=sale_id))
         members = r.zrange(u_key, 0, -1)
         weights = claim_weights(p_hat, [(float(t0.get(m, now)), m in shows) for m in members], now, delays)
