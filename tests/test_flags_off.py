@@ -15,7 +15,8 @@ from tests import flags_off_scenario
 
 GOLDEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden", "flags_off.json")
 
-NEW_FLAGS = ("CLAIM_WINDOW", "DB_LIMITER", "FA_TTL_MODE", "FA_SOLDOUT_NOTIFY", "PROTEGO_LOCK_TIMEOUT_MS")
+NEW_FLAGS = ("CLAIM_WINDOW", "DB_LIMITER", "FA_TTL_MODE", "FA_SOLDOUT_NOTIFY", "PROTEGO_LOCK_TIMEOUT_MS",
+             "FA_WEIGHTING", "FA_MARGIN", "FA_PRIOR_P", "FA_PRIOR_DELAYS", "FA_PACING", "FA_TIMING_HEADERS")
 
 
 def test_all_new_flags_default_off():

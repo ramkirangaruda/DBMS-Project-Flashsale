@@ -112,3 +112,41 @@ def test_converges_to_true_rate_on_a_long_stream():
     lognormal_within_ttl = sum(1 for _ in range(20000) if rng.lognormvariate(0.0, 1.0) < ttl) / 20000
     est = se.censored([(t, d) for t, _x, d in log], 60.0, ttl)
     assert est == pytest.approx(p * lognormal_within_ttl, abs=0.03)
+
+
+# ---------------------------------------------------------------- warm start and posterior (new; cold path above is the pilot)
+def test_censored_state_cold_is_censored():
+    buyers = [(0.0, 1.0), (0.0, None), (10.0, 2.0), (40.0, None)]
+    p, g = se.censored_state(buyers, 50.0, 30)
+    assert p == se.censored(buyers, 50.0, 30)
+    assert g == [1.0, 2.0]                         # both shown buyers are mature (age >= 30)
+    assert se.censored_state([(40.0, None)], 50.0, 30) == (1.0, None)
+
+
+def test_warm_prior_p_before_any_cohort_matures():
+    assert se.censored_state([(40.0, None)], 50.0, 30, prior_p=0.4) == (0.4, None)
+
+
+def test_warm_prior_delays_stand_in_for_g_until_a_cohort_matures():
+    # four young unshown buyers aged 5 s; seeded G says all shows happen by 4 s
+    buyers = [(45.0, None)] * 4
+    p, g = se.censored_state(buyers, 50.0, 30, prior_p=0.5, prior_delays=[1.0, 2.0, 3.0, 4.0])
+    assert g == [1.0, 2.0, 3.0, 4.0]
+    assert abs(p - (0 + 2 * 0.5) / (4 + 2)) < 1e-12
+    # a matured cohort replaces the seed
+    _p, g2 = se.censored_state([(0.0, 7.0)] + buyers, 50.0, 30, prior_delays=[1.0])
+    assert g2 == [7.0]
+
+
+def test_posterior_show():
+    assert se.posterior_show(0.7, 0.0) == 0.7
+    assert se.posterior_show(0.7, 1.0) == 0.0
+    assert se.posterior_show(1.0, 0.5) == 1.0          # everyone shows: waiting proves nothing
+    assert abs(se.posterior_show(0.5, 0.5) - 0.25 / 0.75) < 1e-12
+    xs = [se.posterior_show(0.6, g / 10) for g in range(11)]
+    assert xs == sorted(xs, reverse=True)                            # older claims weigh less
+
+
+def test_cdf():
+    assert se.cdf([1.0, 2.0, 3.0, 4.0], 2.5) == 0.5
+    assert se.cdf([], 9.0) == 0.0
