@@ -82,6 +82,7 @@ HEADER = "x-admission-token"
 #
 # It is not a feature. In anything real the door does not have an off switch.
 ENFORCED = os.getenv("ADMISSION_ENFORCED", "true").lower() not in ("false", "0", "no")
+TIMING_HEADERS = os.getenv("FA_TIMING_HEADERS", "off").strip().lower() in ("on", "1", "true")
 
 STATE_KEY = "admission:state:{token}"
 STATE_TTL_S = max(600, ADMISSION_TTL_S * 20)     # outlives any renewed grant
@@ -241,6 +242,7 @@ class AdmissionMiddleware(BaseHTTPMiddleware):
             # Futility-aware admission: the buyer showed up (first one counts).
             claim_window.on_show(ar, sale_id, token)
         gated = False
+        waited_ms = 0.0
         if db_limiter.ENABLED and ar is not None:
             # Decoupled DB concurrency limit: wait on the event loop for a
             # slot BEFORE the handler takes a thread. See app/db_limiter.py.
@@ -271,6 +273,12 @@ class AdmissionMiddleware(BaseHTTPMiddleware):
             outcome = control.classify(response.status_code, body_status)
             headers = dict(response.headers)
             headers.pop("content-length", None)       # rebuilt from the buffered body
+            if TIMING_HEADERS:
+                # Evaluation only (FA_TIMING_HEADERS=on): lets a load generator
+                # split a buyer's admission-to-verdict time into gate wait and
+                # handler (DB) time per request.
+                headers["X-FA-Gate-Ms"] = f"{waited_ms:.1f}"
+                headers["X-FA-Handler-Ms"] = f"{(time.perf_counter() - started) * 1000.0:.1f}"
             return Response(content=body, status_code=response.status_code,
                             headers=headers,
                             media_type=response.media_type or "application/json")

@@ -28,6 +28,33 @@ MODES (CLAIM_WINDOW)
     naive         p_hat = shows / admitted (app/show_estimator.naive)
     censored      the censoring-aware estimate (app/show_estimator.censored)
 
+WEIGHTING (FA_WEIGHTING, only with naive|censored|fixed|oracle)
+    count       default: every unresolved claim counts as one, so the
+                window is W = ceil(free / p_hat) as above
+    posterior   each unresolved claim counts by the probability it will
+                still show given its age a (time since its clock started):
+                    p_i = p_hat (1 - G(a)) / (1 - p_hat G(a))
+                with G the show-delay CDF from the estimator's mature
+                cohorts (app/show_estimator.posterior_show). A claim whose
+                buyer has already shown counts 1. Admit while
+                    sum p_i  <  free * FA_MARGIN
+                each new claim adding p_hat. With no G yet every p_i is
+                p_hat, which is the count window again (scaled by margin).
+    FA_MARGIN   the knob (default 1.0): above 1 admits more (faster, more
+                futile admissions), below 1 fewer.
+
+WARM START (default cold)
+    FA_PRIOR_P       the estimator's prior sits here instead of 1 (the
+                     previous sale's final p_hat)
+    FA_PRIOR_DELAYS  JSON list of a previous sale's show delays, used as G
+                     until this sale has a mature cohort
+
+PACING (FA_PACING=on, default off)
+    Release at most about what the DB limiter can complete: a token bucket
+    refilled at limit / median checkout time (Little's law over the
+    limiter's own observations), capped at one limit's worth. The window
+    still caps the total. Cuts the burst that queues at the gate.
+
     The claim window forces the fixed-TTL mode (FA_TTL_MODE=fixed): a token's
     30 s clock starts at first notification and is not renewed by later polls.
     The estimator needs a fixed horizon to know when a cohort is fully
@@ -65,6 +92,24 @@ P_FLOOR = float(os.getenv("FA_P_FLOOR", str(show_estimator.DEFAULT_FLOOR)))
 PRIOR_K = float(os.getenv("FA_PRIOR_K", str(show_estimator.DEFAULT_PRIOR_K)))
 W_MAX = int(os.getenv("FA_W_MAX", "100000"))
 ESTIMATE_EVERY_S = float(os.getenv("FA_ESTIMATE_EVERY_S", "0.1"))   # the pilot's cadence
+WEIGHTING = os.getenv("FA_WEIGHTING", "count").strip().lower()
+MARGIN = float(os.getenv("FA_MARGIN", "1.0"))
+PRIOR_P = float(os.getenv("FA_PRIOR_P", "1.0"))
+PACING = os.getenv("FA_PACING", "off").strip().lower() in ("on", "1", "true")
+PACE_MIN_RATE = float(os.getenv("FA_PACE_MIN_RATE", "20"))   # claims/s before the limiter has data
+
+
+def _prior_delays():
+    raw = os.getenv("FA_PRIOR_DELAYS", "").strip()
+    if not raw:
+        return None
+    if not raw.startswith("["):
+        with open(raw) as f:
+            raw = f.read()
+    return sorted(float(x) for x in json.loads(raw)) or None
+
+
+PRIOR_DELAYS = _prior_delays()
 
 U_KEY = "fa:U:{sale_id}"
 T0_KEY = "fa:t0:{sale_id}"
@@ -102,6 +147,46 @@ def budget(w, unresolved):
     return max(0, int(w) - int(unresolved))
 
 
+def weighted_budget(free, p_hat, weights, margin=1.0, floor=P_FLOOR, w_max=W_MAX):
+    """How many more claims fit when each unresolved claim counts by its
+    weight (its probability of still showing) and each new claim by p_hat:
+    the largest n with sum(weights) + (n - 1) p_hat < free * margin, i.e.
+    admit while the expected number of shows is below the target."""
+    if free is None or free <= 0:
+        return 0
+    p = min(1.0, max(floor, p_hat))
+    room = free * margin - sum(weights)
+    if room <= 0:
+        return 0
+    return min(w_max, math.ceil(room / p - 1e-9))
+
+
+def claim_weights(p_hat, unresolved, now, delays):
+    """unresolved: iterable of (clock_start, shown). A shown buyer counts 1;
+    an unshown one by show_estimator.posterior_show at its age."""
+    out = []
+    for start, shown in unresolved:
+        if shown:
+            out.append(1.0)
+        else:
+            g = show_estimator.cdf(delays, now - start) if delays else 0.0
+            out.append(show_estimator.posterior_show(p_hat, g))
+    return out
+
+
+def pace_rate(limit, median_ms, min_rate=PACE_MIN_RATE):
+    """Claims per second the DB limiter can complete: limit / median time
+    (Little's law). Before the limiter has data, min_rate."""
+    if not limit or not median_ms:
+        return min_rate
+    return max(min_rate, limit * 1000.0 / max(1.0, median_ms))
+
+
+def pace_step(bucket, rate, dt, cap):
+    """Token bucket: refill, cap. Returns the new bucket."""
+    return min(float(cap), bucket + rate * max(0.0, dt))
+
+
 def is_sold_out(free):
     """Terminal for the queue: every unit is reserved. An admitted buyer who
     has not resolved yet cannot change that -- they can only lose -- so this
@@ -117,6 +202,22 @@ def estimate(mode, buyers, now, ttl, fixed_p=None, oracle_p=None, k=PRIOR_K, flo
     if mode == "oracle":
         return min(1.0, max(floor, oracle_p if oracle_p is not None else 1.0))
     return show_estimator.ESTIMATORS[mode](buyers, now, ttl, k=k, floor=floor)
+
+
+def estimate_state(mode, buyers, now, ttl, fixed_p=None, oracle_p=None, k=PRIOR_K, floor=P_FLOOR,
+                   prior_p=1.0, prior_delays=None):
+    """(p_hat, G delays or None). The delay sample is the censored
+    estimator's mature cohorts (or the warm seed); other modes have no G of
+    their own and use the seed if one is given."""
+    if mode == "censored":
+        return show_estimator.censored_state(buyers, now, ttl, k=k, floor=floor,
+                                             prior_p=prior_p, prior_delays=prior_delays)
+    if mode == "naive" and prior_p != 1.0:
+        n = sum(1 for _ in buyers)
+        shows = sum(1 for _, d in buyers if d is not None)
+        p = min(1.0, max(floor, (shows + k * prior_p) / (n + k))) if n else min(1.0, max(floor, prior_p))
+        return p, prior_delays
+    return estimate(mode, buyers, now, ttl, fixed_p=fixed_p, oracle_p=oracle_p, k=k, floor=floor), prior_delays
 
 
 def buyers_from_hashes(t0, shows):
@@ -214,7 +315,8 @@ def on_outcome(ar, sale_id, token, status_code, body_status):
 
 
 # ---------------------------------------------------------------- leader side (sync, admission worker)
-_last = {}          # sale_id -> (computed_at, p_hat)
+_last = {}          # sale_id -> (computed_at, p_hat, G delays)
+_pace = {}          # sale_id -> (last refill, bucket)
 
 
 def oracle_p():
@@ -244,22 +346,51 @@ def leader_tick(r, sale_id, ttl, now=None):
 
     free = stock_view.read_free(r, sale_id)
 
-    last_t, p_hat = _last.get(sale_id, (-1e18, 1.0))
+    posterior = WEIGHTING == "posterior"
+    last_t, p_hat, delays = _last.get(sale_id, (-1e18, min(1.0, PRIOR_P), PRIOR_DELAYS))
+    t0 = shows = None
     if now - last_t >= ESTIMATE_EVERY_S:
         buyers = []
-        if MODE in ("naive", "censored"):
-            buyers = buyers_from_hashes(r.hgetall(T0_KEY.format(sale_id=sale_id)),
-                                        r.hgetall(SHOW_KEY.format(sale_id=sale_id)))
-        p_hat = estimate(MODE, buyers, now, ttl, fixed_p=FIXED_P, oracle_p=oracle_p())
-        _last[sale_id] = (now, p_hat)
+        if MODE in ("naive", "censored") or posterior:
+            t0 = r.hgetall(T0_KEY.format(sale_id=sale_id))
+            shows = r.hgetall(SHOW_KEY.format(sale_id=sale_id))
+            buyers = buyers_from_hashes(t0, shows)
+        if PRIOR_P == 1.0 and PRIOR_DELAYS is None and not posterior:
+            p_hat = estimate(MODE, buyers, now, ttl, fixed_p=FIXED_P, oracle_p=oracle_p())
+        else:
+            p_hat, delays = estimate_state(MODE, buyers, now, ttl, fixed_p=FIXED_P, oracle_p=oracle_p(),
+                                           prior_p=PRIOR_P, prior_delays=PRIOR_DELAYS)
+        _last[sale_id] = (now, p_hat, delays)
 
+    wsum = None
     if free is None:
         # The stock view has not run yet. Admit nobody rather than guess:
         # it refreshes every FA_STOCK_REFRESH_S, so this lasts one refresh.
         w, slots = 0, 0
+    elif posterior:
+        if t0 is None:
+            t0 = r.hgetall(T0_KEY.format(sale_id=sale_id))
+            shows = r.hgetall(SHOW_KEY.format(sale_id=sale_id))
+        members = r.zrange(u_key, 0, -1)
+        weights = claim_weights(p_hat, [(float(t0.get(m, now)), m in shows) for m in members], now, delays)
+        wsum = sum(weights)
+        slots = weighted_budget(free, p_hat, weights, MARGIN)
+        w = unresolved + slots
     else:
-        w = window(free, p_hat)
+        w = window(free * MARGIN, p_hat) if MARGIN != 1.0 else window(free, p_hat)
         slots = budget(w, unresolved)
+
+    paced = None
+    if PACING and slots:
+        from app import db_limiter
+        st = _pace.get(sale_id)
+        limit = int(r.get(db_limiter.LIMIT_KEY) or db_limiter.CFG.init_cwnd)
+        med = db_limiter.read_window(r, now, 2, q=0.5)["q_ms"]
+        rate = pace_rate(limit, med)
+        bucket = pace_step(st[1] if st else float(limit), rate, (now - st[0]) if st else 0.0, limit)
+        paced = min(slots, int(bucket))
+        _pace[sale_id] = (now, bucket - paced)
+        slots = paced
 
     sold_out = is_sold_out(free)
     pipe = r.pipeline()
@@ -270,6 +401,8 @@ def leader_tick(r, sale_id, ttl, now=None):
     pipe.set(STATE_KEY.format(sale_id=sale_id), json.dumps({
         "t": round(now, 3), "mode": MODE, "p_hat": round(p_hat, 4), "free": free,
         "window": w, "unresolved": unresolved, "budget": slots, "sold_out": sold_out,
+        **({"weight_sum": round(wsum, 2), "margin": MARGIN} if wsum is not None else {}),
+        **({"paced": paced} if PACING else {}),
     }), ex=KEY_TTL_S)
     pipe.execute()
     return slots
@@ -297,3 +430,4 @@ def reset(r):
         for k in r.scan_iter(match=pat, count=1000):
             r.delete(k)
     _last.clear()
+    _pace.clear()

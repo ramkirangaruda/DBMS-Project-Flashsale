@@ -55,6 +55,22 @@ def censored(buyers, now, ttl, k=DEFAULT_PRIOR_K, floor=DEFAULT_FLOOR):
             their first checkout attempt, None if they have not shown.
     Returns p_hat in [floor, 1].
     """
+    return censored_state(buyers, now, ttl, k=k, floor=floor)[0]
+
+
+def censored_state(buyers, now, ttl, k=DEFAULT_PRIOR_K, floor=DEFAULT_FLOOR,
+                   prior_p=1.0, prior_delays=None):
+    """
+    censored(), plus the sorted show delays G is built from, and two optional
+    seeds from a previous sale (the "warm" start; both off by default, which
+    is exactly censored()):
+
+      prior_p       the k pseudo-observations sit at prior_p instead of 1
+      prior_delays  a sorted delay sample used as G until this sale has a
+                    mature cohort of its own
+
+    Returns (p_hat, delays). delays is None when there is no G yet.
+    """
     mature_delays, n_mature, shows_mature = [], 0, 0
     young = []
     for t, delay in buyers:
@@ -66,13 +82,40 @@ def censored(buyers, now, ttl, k=DEFAULT_PRIOR_K, floor=DEFAULT_FLOOR):
                 mature_delays.append(delay)
         else:
             young.append((age, delay))
-    if not mature_delays:
-        return 1.0
-    mature_delays.sort()
-    nd = len(mature_delays)
+    if mature_delays:
+        mature_delays.sort()
+        g = mature_delays
+    elif prior_delays:
+        g = prior_delays
+    else:
+        return min(1.0, max(floor, prior_p)), None
+    nd = len(g)
     shows = shows_mature + sum(1 for _, d in young if d is not None)
-    expect = n_mature + sum(bisect.bisect_right(mature_delays, age) / nd for age, _ in young)
-    return min(1.0, max(floor, (shows + k) / (expect + k)))
+    expect = n_mature + sum(bisect.bisect_right(g, age) / nd for age, _ in young)
+    return min(1.0, max(floor, (shows + k * prior_p) / (expect + k))), g
+
+
+def cdf(delays, age):
+    """G(age): the share of the sorted delay sample at or below age."""
+    if not delays:
+        return 0.0
+    return bisect.bisect_right(delays, age) / len(delays)
+
+
+def posterior_show(p, g):
+    """Probability that a buyer who has not shown after an age where a
+    fraction g of shows would already have happened will still show:
+
+        p (1 - g) / (1 - p g)
+
+    p is the prior show rate (p_hat). g = 0 gives p (no evidence yet);
+    g = 1 gives 0 (every show would have happened by now)."""
+    p = min(1.0, max(0.0, p))
+    g = min(1.0, max(0.0, g))
+    den = 1.0 - p * g
+    if den <= 0.0:
+        return 0.0 if g >= 1.0 else 1.0
+    return p * (1.0 - g) / den
 
 
 def naive(buyers, now, ttl, k=DEFAULT_PRIOR_K, floor=DEFAULT_FLOOR):
