@@ -1,9 +1,118 @@
 # Morning report: futility-aware admission, overnight run of 2026-10-30
 
-> Final first-pass numbers (360 of 360 runs, 5 seeds per cell), updated 02:40 UTC. P6 results added at 03:15 UTC.
+> Round 2 (frontier grids at p 0.7 and 0.4, k6) added 13:30 UTC on 2026-10-31, on top. Round 1: final first-pass numbers (360 of 360 runs), updated 02:40 UTC; P6 added 03:15 UTC.
 
 Branch: `research/futility-admission` (pushed; nothing pushed to `main`, no force-push, no history rewritten).
 Plan: https://claude.ai/artifact/LxT22SaYwRGUTc3Wr79bBm . Every decision with its reasons: [`DECISIONS.md`](DECISIONS.md). How to run everything: [`README.md`](README.md).
+
+# Round 2 (2026-10-31): the frontier, warm starts, latency split, pacing, k6
+
+> Added after Ramkiran's five decisions (DECISIONS.md, "Round 2", D20 to D25). Round 1 follows unchanged below.
+
+## Headline
+
+**With a warm start and pacing, the posterior-weighted window traces a frontier that is below every baseline on futile admissions, and faster than AIMD, Protego-style and Breakwater-style at its fast end. It never reaches S-K:40's sell-out time.** Pessimistic, demand ratio 10, 2,000 buyers, 200 units, medians over 5 seeds [95% bootstrap CI of the median]:
+
+| | p_show 0.7: time to sell out, s | futile | p_show 0.4: time to sell out, s | futile |
+|---|---|---|---|---|
+| S-K:40 | 6.4 [6.2, 6.7] | 1202 [1183, 1223] | 9.4 [9.0, 9.8] | 618 [568, 629] |
+| AIMD | 10.9 [10.5, 12.8] | 1188 [1155, 1214] | 37.6 [36.3, 39.1] | 289 [261, 328] |
+| Protego-style 100 ms | 11.0 [10.0, 13.4] | 1192 [1155, 1216] | 37.5 [36.2, 38.9] | 289 [261, 333] |
+| Breakwater-style | 22.6 [19.1, 30.8] | 1196 [1182, 1222] | 21.1 [17.7, 23.1] | 611 [568, 627] |
+| count window, oracle p | 23.5 [11.1, 37.9] | 4 [0, 13] | 19.7 [15.8, 64.8] | 5 [2, 18] |
+| mechanism, margin 1.0 | 23.5 [19.0, 32.1] | 4 [2, 10] | 34.5 [32.6, 39.8] | 6 [2, 18] |
+| mechanism, margin 1.25 | 15.3 [13.6, 22.2] | 7 [3, 16] | 32.9 [32.4, 39.9] | 6 [2, 10] |
+| mechanism, margin 1.5 | 12.6 [10.6, 14.0] | 15 [6, 22] | 31.8 [26.8, 34.9] | 7 [2, 7] |
+| mechanism, margin 2.0 | 9.2 [7.8, 18.0] | 50 [34, 285] | 21.8 [19.4, 31.9] | 5 [0, 12] |
+| mechanism, margin 3.0 | 9.9 [6.9, 19.0] | 227 [77, 466] | 16.1 [11.4, 21.4] | 7 [5, 32] |
+| warm p only + pacing, margin 1.25 | 9.3 [9.1, 13.8] | 22 [8, 38] | 17.2 [11.7, 31.4] | 7 [1, 28] |
+
+"Mechanism" = posterior weighting + warm-G start + pacing (`cwp:<m>:warmg:pace`). Futile = admitted buyers who showed and got no unit (sold out at checkout, expired while waiting, or turned away at the gate; D24). Full tables with every arm and every latency column: [`frontier07.md`](../results/fa/frontier/frontier07.md), [`frontier04.md`](../results/fa/frontier/frontier04.md).
+
+![frontier p 0.7](../results/fa/frontier/frontier07.png)
+![frontier p 0.4](../results/fa/frontier/frontier04.png)
+
+In the p 0.4 figure the AIMD marker sits under the Protego-style marker (37.6 s / 289 and 37.5 s / 289).
+
+## What the ablations say
+
+* **The warm p does most of the work, not the age discount.** A warm p alone (`cwp:<m>:warm:pace`, no seeded G) is as good or better than warm-G at the points measured: at p 0.7, margin 1.25 gives 9.3 s with 22 futile, against warm-G's 9.2 s with 50 at margin 2.0; at p 0.4, margin 1.25 gives 17.2 s with 7, against warm-G's 16.1 s with 7 at margin 3.0 and 32.9 s with 6 at 1.25. Warm-G is the more conservative of the two at the same margin, so its curve is shifted, not lower. I don't have evidence that the seeded G improves the frontier over a warm p.
+* **Cold posterior stays slow.** With p = 1 until a cohort matures (about 30 s), cold `cwp` takes 34.7 to 40.2 s to sell out at margins 0.9 to 1.25 at p 0.7, and at p 0.4 it over-admits as well (116 to 237 futile at margins 0.9 to 1.25, unpaced). Ramkiran's structural point holds: the cold window has nothing to discount a claim's age with until a cohort matures, so the age weighting cannot act early in a cold sale.
+* **Posterior against count weighting, same warm-G start and pacing.** At the same margin the posterior window sells out faster: p 0.7 margin 1.25, 15.3 s vs 38.1 s (futile 7 vs 5); p 0.4 margin 2.0, 21.8 s vs 38.0 s (5 vs 10). At p 0.7 the two curves end up close along the frontier (count margin 2.0: 8.5 s with 40 futile; posterior 2.0: 9.2 s with 50). At p 0.4 the count window never gets below 38.0 s, and at margin 1.0 does not sell out by the 90 s deadline (97.5% sold), so there the posterior weighting does help. I only ran the count window with the warm-G start, so the cause of the gap is not isolated.
+* **Without pacing, warm-G fails completely.** `cwp:<m>:warmg` (no pacing) admits all 2,000 buyers with 1,192 (p 0.7) and 613 to 614 (p 0.4) futile, i.e. no better than S-K. Under the all-at-once burst, shows reach the door late and the seeded G (from a calm sale) reads them as no-shows (D22). This is a real fragility of age-based inference when the observation path slows under load.
+* **Pacing cuts gate wait to about zero and moves client p95 from seconds to hundreds of ms.** Cold posterior at margin 1.25, unpaced vs paced: p 0.7, winner gate wait 0.24 s vs 0.00 s mean, client p95 4,499 ms vs 246 ms, sell-out 34.7 s vs 34.2 s, futile 5 vs 13; p 0.4, client p95 6,918 vs 917 ms, futile 116 vs 48.
+
+## Latency (decision 3)
+
+Primary metric: admission-to-verdict per buyer, minus the buyer's own show delay ("system time"), split into gate wait and DB (handler) time. p 0.7, medians over seeds:
+
+| arm | winner system time p50, s | winner gate wait mean, s | winner DB time mean, s | queue-loser verdict p50, s | client checkout p95, ms |
+|---|---|---|---|---|---|
+| S-K:40 | 0.29 | 0.00 | 0.031 | 17.6 | 219 |
+| AIMD | 0.27 | 0.00 | 0.028 | 50.8 | 55 |
+| Protego-style 100 ms | 0.36 | 0.00 | 0.022 | 51.1 | 83 |
+| Breakwater-style | 16.75 | 4.72 | 0.042 | 33.3 | 18,528 |
+| count window, oracle p (unpaced) | 5.53 | 0.68 | 0.085 | 23.6 | 4,191 |
+| mechanism, margin 1.25 | 0.09 | 0.00 | 0.024 | 15.3 | 181 |
+| mechanism, margin 2.0 | 0.73 | 0.03 | 0.055 | 9.3 | 968 |
+| warm p + pacing, margin 1.25 | 0.19 | 0.00 | 0.042 | 9.4 | 443 |
+
+At p 0.7 the paced warm arms tell queued losers their verdict sooner than S-K:40 (9.3 to 15.3 s vs 17.6 s), because the sold-out notice goes to everyone still queued as soon as the last unit sells. At p 0.4 the warm-G arms do not (21.9 to 33.0 s at margins 1.25 to 2.0, against S-K's 19.2 s and AIMD's 67.4 s); warm p alone at margin 1.25 gets 17.2 [11.8, 31.4] s. The CIs and the p 0.4 columns are in the full tables.
+
+## k6 (decision 5)
+
+Full table: [`results/fa/k6/round2_summary.md`](../results/fa/k6/round2_summary.md) (from `results/fa/k6/round2.jsonl`, `scripts/fa_k6_table.py`). 1,000 k6 virtual buyers, 60 units, pessimistic, p_show 0.7, lognormal show delay median 2 s, one local API process, 3 repetitions; cells are median [min, max] over the 3. Every buyer polls `/queue/status` for real.
+
+| arm | futile (admitted, sold out at checkout) | told sold out in the queue | winner admission-to-verdict p50, ms | gate wait p50 / p95, ms | DB handler p50, ms | client checkout p95, ms | queue-loser verdict p50, ms |
+|---|---|---|---|---|---|---|---|
+| S-K:40 | 588 [577, 643] | 0 | 5,701 [5,602, 6,824] | 0 / 0 | 1,900 [1,472, 2,362] | 5,045 [4,842, 5,960] | n/a (no notice) |
+| AIMD | 616 [601, 644] | 0 | 1,726 [1,565, 2,229] | 0 / 0 | 17 [15, 24] | 3,158 [2,344, 3,171] | n/a (no notice) |
+| count window, cold (`cw-censored`) | 3 [1, 8] | 912 [911, 916] | 5,692 [2,294, 5,932] | 87 / 189 | 869 [332, 1,764] | 4,470 [3,672, 4,477] | 42,529 [40,242, 70,860] |
+| posterior, cold, seeding sale (`cwp:1.0`) | 3 [0, 9] | 916 [902, 921] | 5,215 [4,918, 5,354] | 73 / 163 | 1,301 [696, 1,603] | 4,151 [3,700, 4,551] | 41,349 [38,514, 45,126] |
+| posterior, warm p + pacing, 1.25 | 2 [1, 3] | 905 [896, 906] | 5,104 [4,501, 5,834] | 103 / 160 | 583 [26, 638] | 3,718 [3,249, 4,527] | 15,167 [10,761, 16,099] |
+| posterior, warm-G + pacing, 1.25 | 33 [15, 96] | 863 [751, 874] | 5,398 [4,562, 6,450] | 42 / 311 | 132 [23, 318] | 4,036 [3,482, 7,729] | 11,302 [10,267, 16,521] |
+
+* **Futility holds end to end.** Every window arm keeps futile admissions at 0 to 9 per sale except warm-G (15 to 96), against 577 to 644 for S-K:40 and AIMD. 60 of 60 units sold and the database invariant held in all 18 runs.
+* **Warm p reaches losers sooner.** Queued losers get the sold-out notice at a median of 15.2 s with warm p (11.3 s with warm-G), against about 41 to 43 s for the cold windows. S-K:40 and AIMD send no notice; their losers find out at checkout.
+* **Warm-G is weaker under k6 than in the Python grid.** 33 [15, 96] futile against the grid's 7 at p 0.7 margin 1.25, and one run had a 4.8 s gate wait p50. That is the D22 fragility again (late shows read as no-shows); pacing reduced it but did not remove it here.
+* **Latency is not separable from load in this setup.** Winner admission-to-verdict includes the buyer's own show delay (median 2 s) in k6, so it is not the grid's "system time". DB handler p50 is 0.6 to 1.9 s for most arms because 1,000 polling virtual buyers and one API process share 4 cores; AIMD keeps it at 17 ms by holding concurrency down. k6 numbers are only comparable within this table.
+* **No sell-out time from k6:** the k6 script does not record when the last unit sold, so speed comparisons come from the grid only.
+* **D26, round 1's "other failures" explained:** the local k6 runner used the committed `results/load/users.json`, whose ids came from the docker deployment's database; 270 of its 300 ids do not exist here, and those checkouts got `404 unknown user or sale`. The runner now exports ids from this database; with that fix there were 0 other failures in all 18 runs. The first, invalid attempt is kept in `results/fa/k6/round2_v1_unknown_users/`.
+
+## Decisions D20 to D26 (details in DECISIONS.md)
+
+* D20 posterior weighting: a shown claim counts 1, an unshown claim counts p(1-G)/(1-pG); reduces exactly to the count window with no G.
+* D21 three starts: cold (default), warm (previous sale's p_hat), warm-G (also its show delays as G until a cohort matures). In the harness "previous sale" = the cold `cwp:1.0` run of the same cell with the previous seed: a stationarity assumption that favours warm starts.
+* D22 grants not yet told keep age 0 (new modes only); still not enough without pacing.
+* D23 pacing: token bucket at limit x 1000 / median checkout ms, floor 20/s, capped at one limit.
+* D24 frontier grids (p 0.7 then 0.4, 31 arms, 5 seeds + 1 seeding run) and the futile / admission-to-verdict definitions.
+* D25 k6 runs: 3 repetitions of a seeding sale + 5 arms, margin 1.25.
+* D26 the local k6 runner used user ids that do not exist in this database; fixed, k6 runs restarted.
+
+## Broken, unfinished, or uncertain (round 2)
+
+* **Nothing beats S-K:40 on sell-out time.** The fastest mechanism point is 9.2 s at p 0.7 (S-K 6.4 s) and 16.1 s at p 0.4 (S-K 9.4 s).
+* **Warm starts assume the next sale looks like the last one.** The seeding sale is drawn from the same distribution. A shifted p between sales is not tested.
+* **Wide CIs at the fast end.** E.g. p 0.7 margin 2.0: futile 50 [34, 285]; margin 3.0: 227 [77, 466]. Five seeds.
+* **Optimistic strategy, p 1.0 and demand ratio 3 not run in round 2** (D24).
+* **The cause of the posterior vs count gap is not isolated** (no `cwc:<m>:warm` arm).
+* Same machine caveats as round 1: one 4-core VM, native Postgres and Redis, one API process, load generator on the same CPU.
+
+## Reproduce (round 2)
+
+```bash
+OTEL_SDK_DISABLED=true SALE_WINDOW_ENFORCED=false python -m scripts.fa_benchmark --grid frontier07
+OTEL_SDK_DISABLED=true SALE_WINDOW_ENFORCED=false python -m scripts.fa_benchmark --grid frontier04
+python -m scripts.fa_frontier results/fa/grid/frontier07.jsonl results/fa/frontier/frontier07
+python -m scripts.fa_frontier results/fa/grid/frontier04.jsonl results/fa/frontier/frontier04
+OTEL_SDK_DISABLED=true SALE_WINDOW_ENFORCED=false python -m scripts.fa_k6 --reps 3
+python -m scripts.fa_k6_table results/fa/k6/round2.jsonl > results/fa/k6/round2_summary.md
+```
+
+---
+
+
+# Round 1
 
 ## Headline
 
