@@ -1,6 +1,6 @@
 # Morning report: futility-aware admission, overnight run of 2026-10-30
 
-> Final first-pass numbers (360 of 360 runs, 5 seeds per cell), updated 02:40 UTC. P6 was still running at that time; see the P6 section.
+> Final first-pass numbers (360 of 360 runs, 5 seeds per cell), updated 02:40 UTC. P6 results added at 03:15 UTC.
 
 Branch: `research/futility-admission` (pushed; nothing pushed to `main`, no force-push, no history rewritten).
 Plan: https://claude.ai/artifact/LxT22SaYwRGUTc3Wr79bBm . Every decision with its reasons: [`DECISIONS.md`](DECISIONS.md). How to run everything: [`README.md`](README.md).
@@ -35,7 +35,7 @@ Two causes are visible in the data. (1) At p 1.0 the claim window has 95% of uni
 
 **P5, first-pass grid.** Arms S-K:40, AIMD (coupled), CW-1, CW-naive, CW-censored, CW-oracle; pessimistic and optimistic; p_show 0.4, 0.7, 1.0; demand ratio 3 and 10; seeds 1 to 5; 200 units, 90 s deadline, TTL 30 s (D7). Complete: 360 of 360 runs, finished about 02:20 UTC (D19: two container restarts cost about two hours).
 
-**P6, Protego-style and Breakwater-style.** Code done (`app/protego.py`, `DB_LIMITER=breakwater`, D16, D17). Runs at one cell only (D18). Not run yet when this was written; it starts automatically when the grid finishes, writing `results/fa/grid/p6.jsonl`. No P6 numbers are claimed here.
+**P6, Protego-style and Breakwater-style.** Code done (`app/protego.py`, `DB_LIMITER=breakwater`, D16, D17). Runs at one cell only (D18). Complete: 40 runs, results below.
 
 ## Results
 
@@ -85,7 +85,24 @@ Full tables, every cell, with medians and 95% percentile-bootstrap CIs of the me
 | 1.0, 3 | 147 [120, 163] | 726 [137, 1639] | 4385 [4296, 4681] | 4720 [4221, 8359] | 4402 [4263, 4571] | 4362 [4065, 4532] |
 | 1.0, 10 | 344 [179, 20875] | 133 [99, 526] | 4529 [74, 4809] | 27331 [18230, 31883] | 4530 [4464, 4723] | 4627 [4263, 4744] |
 
-5 seeds in every cell. Invariant held in 360 of 360 runs. Fresh P0 baselines and the k6 baseline are in `results/fa/p0/` and `results/fa/k6/` and are not repeated here.
+### P6: Protego-style and Breakwater-style (pessimistic, p_show 0.7, ratio 10, 5 seeds)
+
+From [`results/fa/grid/p6_summary.md`](../results/fa/grid/p6_summary.md) (`results/fa/grid/p6.jsonl`); first-pass rows for the same cell repeated from the tables above for comparison. Optimistic is in the P6 summary and tells the same story.
+
+| arm | lost at checkout | time to sell out, s | loser verdict p50, s | client checkout p95, ms |
+|---|---|---|---|---|
+| protego:50 | 1191 [1149, 1210] | 11.6 [10.2, 12.2] | 49.3 [47.6, 51.0] | 67 [32, 166] |
+| protego:100 | 1197 [1169, 1212] | 10.1 [9.9, 10.7] | 47.2 [45.2, 50.9] | 39 [39, 50] |
+| protego:250 | 1197 [1147, 1212] | 10.7 [10.1, 12.8] | 47.6 [45.6, 51.0] | 38 [35, 305] |
+| breakwater:40 | 1034 [938, 1165] | 18.5 [14.7, 23.6] | 28.9 [28.6, 31.0] | 15965 [12729, 23402] |
+| aimd (first pass) | 1197 [1161, 1212] | 10.5 [10.0, 12.5] | 47.5 [45.3, 53.4] | 36 [33, 61] |
+| cw-censored (first pass) | 2 [0, 13] | 39.1 [35.9, 90.0] | 38.9 [36.0, 55.6] | 2980 [2107, 3325] |
+
+* **The lock budget almost never fired.** Across all 30 Protego-style runs there were 2 lock-timeout drops (one run, 50 ms, pessimistic). The AIMD door keeps checkout concurrency low enough that no checkout waits 50 ms for a row lock, so Protego-style is AIMD in this workload. The timeouts are not distinguishable from each other: 100 ms has the lowest median sell-out time (10.1 s pessimistic, 10.3 s optimistic), but every CI overlaps. Reporting "best = 100 ms" would be reading noise. Invariant held in all 40 P6 runs (lock timeouts counted as drops, not errors, as decided).
+* **Breakwater-style** (no claim window, credits driven by queueing delay) shows fewer "lost at checkout" than AIMD (1,034 vs 1,197), but that is not a win: in its runs 17 to 264 admitted buyers per sale had their token expire (403) while waiting at the gate, and those are counted as expired, not lost (`outcomes` in `p6.jsonl`). It is slower than AIMD and has the worst client p95 here (16 s, gate wait). One untuned operating point (D17).
+* All 30 Protego-style runs hit the 90 s deadline although they sold out in 10 to 13 s; the harness kept running until the deadline because some buyers were still unresolved. Not investigated; it does not change the sold-out time or the lost count.
+
+5 seeds in every cell. Invariant held in 360 of 360 first-pass runs. Fresh P0 baselines and the k6 baseline are in `results/fa/p0/` and `results/fa/k6/` and are not repeated here.
 
 
 ## Decisions taken overnight
@@ -99,10 +116,11 @@ Each has its reasons and the alternatives in [`DECISIONS.md`](DECISIONS.md). The
 
 ## Broken, unfinished, or uncertain
 
+* **"Lost at checkout" excludes admitted buyers whose token expired while they waited** (counted as `expired`). Medians are 1 to 5 per run for every first-pass arm, max 7 for `cw-censored`, but up to 831 in one `cw-naive` run and 17 to 264 for Breakwater-style, so those two arms are worse than the lost column alone says.
 * **Time metrics come from trajectories sampled about once a second**, so "time to 95% sold" can be slightly later than the sell-out time in a few cells.
 * **Two container restarts (D19).** The cloud container was reclaimed twice while the grid ran (about 19:05 and 20:24 UTC), costing about two hours. Services were restarted with the same commands and the grid resumed from its results file. The grid still finished all five seeds.
 * **First grid attempt invalid for limiter arms (D15).** A DB-limiter bug made CW arms look much worse than they are (as low as 51% sold). Those rows are archived in `results/fa/grid/firstpass_v1_gatebug.jsonl` and not used anywhere in this report, except the `S-K:40` and `aimd` rows, which never touch the limiter and are carried over with a `carried_from` field.
-* **End-to-end oversell test predates the limiter fix.** `FA_INTEGRATION=1 pytest tests/test_fa_integration.py` passed 10/10 before commit 04b1de3; it was not re-run after, to keep the CPU free for the grid. The unit tests (108) did pass after the fix, and every grid run checks the invariant itself (`invariant_ok`). Re-run it before trusting the branch.
+* **End-to-end oversell test re-run after the limiter fix:** `FA_INTEGRATION=1 pytest tests/test_fa_integration.py` passed 10 of 10 at 03:20 UTC (every claim-window mode, both strategies, zero oversell), after the grid and P6 finished. Full suite: 108 passed, 10 skipped (the integration tests without the flag). Ruff on the new and changed files: the only findings are in four pre-existing test files this branch does not touch (D3).
 * **k6 "other_failure".** The local single-replica k6 baseline shows about 420 requests per run classified as other failures. Not investigated. The k6 numbers are not used for any claim about the mechanism.
 * **One machine, no Docker.** 4-core VM, native Postgres and Redis on the compose ports, one API process. Load generator and server share the CPU. Absolute times are not comparable with the laptop results in `docs/`.
 * **Headline numbers come from the Python harness, not k6** (plan 6.1 said k6). Each admitted buyer is notified by a real status GET (D6), so the notification path is exercised, but the k6 FA variant (`results/fa/load/flashsale_fa.js`) has not been run, and the k6 baseline itself has unexplained failures (below).
