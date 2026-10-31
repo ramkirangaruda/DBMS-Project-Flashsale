@@ -75,6 +75,13 @@ const pollCount   = new Trend('fs_polls');
 const noShow      = new Counter('fs_noshow');
 const toldSoldOut = new Counter('fs_told_sold_out');
 const verdictMs   = new Trend('fs_loser_verdict_ms', true);
+// Round 2: admission-to-verdict per buyer (from the status call that said
+// "admitted" to the checkout answer), and the door's gate / handler split
+// from the X-FA-* headers the server sends with FA_TIMING_HEADERS=on.
+const a2vWinMs  = new Trend('fs_a2v_winner_ms', true);
+const a2vLoseMs = new Trend('fs_a2v_loser_ms', true);
+const gateMs    = new Trend('fs_gate_ms', true);
+const handlerMs = new Trend('fs_handler_ms', true);
 
 export const options = {
   scenarios: {
@@ -152,9 +159,11 @@ export default function () {
   const uid = users[(__VU - 1) % users.length];
 
   let token = null;
+  let tAdmit = Date.now();
   if (USE_QUEUE) {
     token = acquireAdmission();
     if (!token) return;
+    tAdmit = Date.now();
     if (Math.random() >= P_SHOW) { noShow.add(1); return; }
     const d = showDelay();
     if (d > 0) sleep(d);
@@ -175,6 +184,8 @@ export default function () {
   );
 
   checkoutMs.add(res.timings.duration);
+  if (res.headers['X-Fa-Gate-Ms'] !== undefined) gateMs.add(parseFloat(res.headers['X-Fa-Gate-Ms']));
+  if (res.headers['X-Fa-Handler-Ms'] !== undefined) handlerMs.add(parseFloat(res.headers['X-Fa-Handler-Ms']));
 
   if (res.status === 403) { refused403.add(1); return; }
 
@@ -184,10 +195,14 @@ export default function () {
   const status = body.status || '';
   const message = (body.message || '').toLowerCase();
 
-  if (status === 'confirmed')      confirmed.add(1);
-  else if (status === 'sold_out')  soldOut.add(1);
+  if (status === 'confirmed')      { confirmed.add(1); a2vWinMs.add(Date.now() - tAdmit); }
+  else if (status === 'sold_out')  { soldOut.add(1); a2vLoseMs.add(Date.now() - tAdmit); }
   else if (message.includes('version conflict')) versionConflict.add(1);
-  else                             otherFailure.add(1);
+  else {
+    otherFailure.add(1);
+    // What these are was an open question after round 1: log the status and message.
+    console.log(`OTHER_FAILURE ${res.status} ${status} ${message.slice(0, 100)}`);
+  }
 }
 
 export function handleSummary(data) {

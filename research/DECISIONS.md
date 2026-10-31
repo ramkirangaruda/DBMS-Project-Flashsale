@@ -129,3 +129,8 @@ Ramkiran decided: speed is a constraint with an explicit knob; count each unreso
 * **Admission-to-verdict** per buyer = grant to final answer, split into notification lag, show delay (the buyer's own think time), gate wait, handler (DB) time and the rest. "System time" = total minus show delay.
 * **Protego at 100 ms:** P6 found no difference between 50, 100 and 250 ms; one point is enough.
 * **Optimistic and p 1.0** are left for later; time.
+
+### D25 (2026-10-31) k6 round-2 runs
+* **Decision:** `scripts/fa_k6.py` drives `results/fa/load/flashsale_fa.js` through the existing single-replica runner (60 units, 1,000 virtual buyers, ratio about 16.7, p_show 0.7, lognormal show delay median 2 s sigma 1, pessimistic), 3 repetitions of: a cold seeding sale (`cwp:1.0`), then S-K:40, AIMD, `cw-censored` (count window, cold), `cwp:1.25:warm:pace` and `cwp:1.25:warmg:pace`. Warm arms take their prior from that repetition's seeding sale. Every buyer polls `/queue/status` for real; the script now records admission-to-verdict per buyer, the gate and handler split from the timing headers, and logs the status and message of every "other failure" so that round 1's unexplained ~420 per run can be classified.
+* **Why margin 1.25:** the middle of the useful part of the p 0.7 frontier (fewer than 25 futile, sell-out under 16 s for both warm arms). One margin keeps the k6 runs to about 40 minutes.
+* **Not comparable** with the Python grid in absolute terms (different stock, ratio and client), only within this set.
