@@ -1,0 +1,13 @@
+grid p6: 0 done, 40 to go
+[1/40] protego:50|pessimistic|0.7|10|1  sold 200/200  lost 1178  told 0  t 10.16  ok True  (92s)
+[2/40] protego:100|pessimistic|0.7|10|1  sold 200/200  lost 1177  told 0  t 10.47  ok True  (93s)
+[3/40] protego:250|pessimistic|0.7|10|1  sold 200/200  lost 1178  told 0  t 10.12  ok True  (93s)
+[4/40] breakwater:40|pessimistic|0.7|10|1  sold 200/200  lost 960  told 0  t 21.1  ok True  (54s)
+[5/40] protego:50|optimistic|0.7|10|1  sold 200/200  lost 1177  told 0  t 11.2  ok True  (93s)
+[6/40] protego:100|optimistic|0.7|10|1  sold 200/200  lost 1178  told 0  t 10.24  ok True  (93s)
+[7/40] protego:250|optimistic|0.7|10|1  sold 200/200  lost 1162  told 0  t 12.44  ok True  (93s)
+[8/40] breakwater:40|optimistic|0.7|10|1  sold 200/200  lost 1000  told 0  t 18.83  ok True  (66s)
+[9/40] protego:50|pessimistic|0.7|10|2  sold 200/200  lost 1210  told 0  t 10.58  ok True  (93s)
+[10/40] protego:100|pessimistic|0.7|10|2  sold 200/200  lost 1208  told 0  t 10.65  ok True  (93s)
+[11/40] protego:250|pessimistic|0.7|10|2  sold 200/200  lost 1210  told 0  t 10.69  ok True  (93s)
+[12/40] breakwater:40|pessimistic|0.7|10|2  sold 200/200  lost 1034  told 0  t 14.68  ok True  (65s)
