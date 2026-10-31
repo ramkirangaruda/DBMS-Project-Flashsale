@@ -98,6 +98,21 @@ def main(path):
         ph = [((r.get("cw_final") or {}).get("state") or {}).get("p_hat") for r in rs]
         print(f"| {strategy} | {p} | {ratio} | {a} | {len(rs)} | {fmt(ph, 3)} | {rs[0]['oracle_p']} |")
 
+    # where the sell-out time goes: the time free units first fell to 5% of
+    # stock (from the run's trajectory) next to the time the last one sold
+    print("\n## Claim-window arms: time to 95% sold against time to sell out\n")
+    print("| strategy | p_show | ratio | arm | n | t free <= 5% of stock, s | t sold out, s |")
+    print("|---|---|---|---|---|---|---|")
+    for key in sorted(groups):
+        strategy, p, ratio, a = key
+        rs = groups[key]
+        t95 = [next((x["t"] for x in r["trajectory"]
+                     if x.get("free") is not None and x["free"] <= 0.05 * r["stock"]), None) for r in rs]
+        if all(t is None for t in t95):
+            continue
+        print(f"| {strategy} | {p} | {ratio} | {a} | {len(rs)} | {fmt(t95, 1)} | "
+              f"{fmt([r['t_sellout_s'] for r in rs], 1)} |")
+
 
 if __name__ == "__main__":
     main(sys.argv[1])
