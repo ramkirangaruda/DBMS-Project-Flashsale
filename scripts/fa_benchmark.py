@@ -594,7 +594,8 @@ for _name, _p in (("round3b_07", 0.7), ("round3b_04", 0.4)):
 # Round 4 (D29): the main figure's two warm starts and the baselines in two
 # more cells, p_show 1.0 (pessimistic) and optimistic at p_show 0.7. Reduced
 # arm set: both warm starts paced across the useful margins, plus baselines.
-MAIN_ARMS = ([f"cwp:{m}:warm:pace" for m in (1.0, 1.1, 1.25, 1.5, 2.0)]
+MAIN_ARMS = (["cwp:1.0"]                                # cold; also the next seed's prior
+             + [f"cwp:{m}:warm:pace" for m in (1.0, 1.1, 1.25, 1.5, 2.0)]
              + [f"cwp:{m}:warmg:pace" for m in (1.0, 1.25, 1.5, 2.0, 3.0)]
              + ["cw-oracle", "S-K:40", "aimd", "protego:100", "breakwater:40"])
 for _name, _strategy, _p in (("main10", "pessimistic", 1.0), ("main07opt", "optimistic", 0.7)):
