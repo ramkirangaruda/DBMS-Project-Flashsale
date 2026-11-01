@@ -160,7 +160,12 @@ def plot(summary, title, path_prefix, families=None):
     for sp in ax.spines.values():
         sp.set_color(GRID)
     ax.tick_params(colors=MUTED, labelsize=8)
-    ax.legend(frameon=False, fontsize=7.5, loc="upper right", labelcolor=INK, ncol=1)
+    if families:
+        # Outside the axes: in the extra cells a baseline sits in the top right.
+        fig.set_size_inches(10.4, 5.6)
+        ax.legend(frameon=False, fontsize=7.5, loc="upper left", bbox_to_anchor=(1.01, 1.0), labelcolor=INK, ncol=1)
+    else:
+        ax.legend(frameon=False, fontsize=7.5, loc="upper right", labelcolor=INK, ncol=1)
     fig.text(0.01, 0.01, "Labels on line points are the margin. Lower-left is better.", fontsize=7.5, color=MUTED)
     fig.tight_layout(rect=(0, 0.03, 1, 1))
     for ext in ("png", "svg"):

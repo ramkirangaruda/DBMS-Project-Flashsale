@@ -1,9 +1,38 @@
 # Morning report: futility-aware admission, overnight run of 2026-10-30
 
-> Round 3 (weighting isolated, wrong priors) added 06:30 UTC on 2026-11-01, on top; round 3b (warm-p margin gap) added 06:45 UTC. Round 2 (frontier grids at p 0.7 and 0.4, k6) added 13:30 UTC on 2026-10-31. Round 1: final first-pass numbers (360 of 360 runs), updated 02:40 UTC; P6 added 03:15 UTC.
+> Round 4 (p 1.0, optimistic) added 11:05 UTC on 2026-11-01, on top. Round 3 (weighting isolated, wrong priors) added 06:30 UTC; round 3b (warm-p margin gap) added 06:45 UTC. Round 2 (frontier grids at p 0.7 and 0.4, k6) added 13:30 UTC on 2026-10-31. Round 1: final first-pass numbers (360 of 360 runs), updated 02:40 UTC; P6 added 03:15 UTC.
 
 Branch: `research/futility-admission` (pushed; nothing pushed to `main`, no force-push, no history rewritten).
 Plan: https://claude.ai/artifact/LxT22SaYwRGUTc3Wr79bBm . Every decision with its reasons: [`DECISIONS.md`](DECISIONS.md). How to run everything: [`README.md`](README.md).
+
+# Round 4 (2026-11-01): two more cells, p 1.0 and the optimistic strategy
+
+> Design in DECISIONS.md D29. 162 runs (`results/fa/grid/main10.jsonl`, `main07opt.jsonl`), invariant held in 162 of 162. Figures and full tables: [`main10`](../results/fa/frontier/main10.md) ([png](../results/fa/frontier/main10.png)), [`main07opt`](../results/fa/frontier/main07opt.md) ([png](../results/fa/frontier/main07opt.png)). Demand ratio 10, 200 units, medians [95% bootstrap CI] over 5 seeds. **Default for the main figure (D29): both warm starts plotted**, as in these figures and the `*_warmp` ones.
+
+| | pessimistic, p 1.0: time, s | futile | optimistic, p 0.7: time, s | futile |
+|---|---|---|---|---|
+| S-K:40 | 5.3 [5.1, 6.1] | 1800 [1793, 1800] | 6.9 [6.5, 8.3] | 1202 [1183, 1223] |
+| AIMD | 9.6 [9.2, 12.6] | 1800 [1798, 1800] | 11.6 [11.1, 13.2] | 1084 [889, 1212] |
+| Protego-style 100 ms | 9.6 [9.0, 12.1] | 1800 [1800, 1800] | 13.0 [11.1, 33.3] | 1192 [847, 1214] |
+| Breakwater-style | 25.8 [21.8, 30.7] | 1797 [1793, 1800] | 26.3 [20.9, 29.1] | 1199 [1172, 1221] |
+| count window, oracle p | 26.7 [20.2, 31.6] | 1 [0, 1] | 22.6 [11.4, 37.8] | 5 [0, 13] |
+| cold posterior, margin 1.0 | 26.6 [19.8, 31.0] | 1 [1, 3] | 38.5 [34.9, 53.3] | 4 [2, 17] |
+| warm p, margin 1.0 | 22.3 [15.3, 23.9] | 3 [2, 4] | 35.6 [33.9, 45.2] | 2 [2, 7] |
+| warm p, margin 1.1 | 10.1 [8.8, 10.4] | 19 [16, 21] | 30.7 [10.8, 37.7] | 3 [1, 17] |
+| warm p, margin 1.25 | 7.5 [7.0, 8.2] | 40 [38, 42] | 10.1 [8.7, 11.0] | 26 [19, 29] |
+| warm p, margin 1.5 | 6.7 [5.9, 9.0] | 76 [73, 85] | 8.1 [7.5, 11.7] | 49 [43, 62] |
+| warm-G, margin 1.0 | 22.0 [15.3, 32.1] | 3 [1, 8] | 23.6 [19.8, 31.9] | 3 [2, 11] |
+| warm-G, margin 1.25 | 8.0 [7.2, 8.4] | 37 [35, 39] | 15.0 [13.2, 22.1] | 8 [2, 17] |
+| warm-G, margin 1.5 | 6.8 [5.9, 7.3] | 74 [71, 79] | 14.0 [12.1, 17.1] | 16 [4, 236] |
+| warm-G, margin 2.0 | 10.0 [6.5, 10.9] | 137 [123, 157] | 8.0 [7.6, 13.9] | 47 [37, 208] |
+
+* **The frontier holds in both cells.** Every window point has 1 to 240 futile admissions (median; the 240 is warm-G at margin 3.0, p 1.0) against 1,084 to 1,800 for the four baselines.
+* **p 1.0 is the closest the mechanism gets to S-K:40 on speed:** margin 1.5 sells out in 6.7 s (warm p) and 6.8 s (warm-G) with 74 to 76 futile, against S-K's 5.3 s with 1,800. Margin 2.0 is slower than 1.5 here (9.1 s and 10.0 s): more admitted buyers contend for the last units. At p 1.0 the two warm starts are indistinguishable, as expected with no no-shows.
+* **At p 1.0, "futile" is simply overshoot**: every admitted buyer shows, so futile is about admitted minus 200 (e.g. margin 1.25 admits 240 with 40 futile).
+* **Optimistic p 0.7 repeats the pessimistic p 0.7 pattern** (round 3b): warm-G gives the faster low-futile points (margin 1.25: 15.0 s with 8 futile; warm p needs margin 1.1 and 30.7 s for 3), and warm p the faster high-futile ones. Warm-G's CIs are wide at margins 1.5 and 2.0 (16 [4, 236], 47 [37, 208]).
+* Process note: the first launch stopped at seed 2 because the grid lacked the cold `cwp:1.0` arm whose runs seed the next seed's prior. It was added and the grid resumed (D29); no completed run was redone or dropped.
+
+---
 
 # Round 3 (2026-11-01): is it the weighting, and what a wrong prior does
 
