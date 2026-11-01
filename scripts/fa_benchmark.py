@@ -570,7 +570,36 @@ for _name, _p in (("frontier07", 0.7), ("frontier04", 0.4), ("frontier10", 1.0))
         "p_show": [_p], "ratio": [10], "seeds": [0, 1, 2, 3, 4, 5],
         "stock": 200, "delay": "lognormal:2,1", "p_pay": 1.0, "deadline_s": 90.0}
 
+# Round 3 (research/DECISIONS.md D27): isolate the weighting (count window
+# with the same warm-p start as the posterior arm) and test a mis-specified
+# prior (a warm arm seeded from a sale with the other p_show). No seeding
+# runs: priors come from the cold cwp:1.0 runs already in the frontier grids,
+# so every warm arm here gets exactly the prior its frontier counterpart got.
+ISOLATE_ARMS = ([f"cwc:{m}:warm:pace" for m in (1.0, 1.25, 1.5, 2.0)]
+                + ["cwp:2.0:warm:pace"])
+for _name, _p, _other in (("round3_07", 0.7, "04"), ("round3_04", 0.4, "07")):
+    GRIDS[_name] = {
+        "arms_by_strategy": {"pessimistic": ISOLATE_ARMS + [f"cwp:{m}:{s}:pace:from{_other}"
+                                                            for s in ("warm", "warmg") for m in (1.25, 2.0)]},
+        "prior_file": f"results/fa/grid/frontier{_name[-2:]}.jsonl",
+        "p_show": [_p], "ratio": [10], "seeds": [1, 2, 3, 4, 5],
+        "stock": 200, "delay": "lognormal:2,1", "p_pay": 1.0, "deadline_s": 90.0}
+
 PRIOR_SOURCE_ARM = "cwp:1.0"
+
+
+def prior_source(name, out_path, cell):
+    """(results file, cell) to take a warm arm's prior from. Frontier grids:
+    this grid's own file. Round 3: the frontier grid of the same p_show, or,
+    for an arm tagged ':fromNN', the frontier grid with p_show 0.NN (the
+    mis-specified prior)."""
+    tag = next((x for x in cell["arm"].split(":") if x.startswith("from")), None)
+    if tag:
+        return os.path.join(ROOT, "results", "fa", "grid", f"frontier{tag[4:]}.jsonl"), \
+            {**cell, "p_show": int(tag[4:]) / 10}
+    if "prior_file" in GRIDS[name]:
+        return os.path.join(ROOT, GRIDS[name]["prior_file"]), cell
+    return out_path, cell
 
 
 def cell_key(c):
@@ -607,8 +636,9 @@ def find_prior(out_path, cell):
                 d = os.path.join(ROOT, "results", "fa", "priors")
                 os.makedirs(d, exist_ok=True)
                 path = os.path.join(d, want.replace("|", "_").replace(":", "_") + ".json")
-                with open(path, "w") as g:
-                    json.dump(pr["delays"], g)
+                if not os.path.exists(path):          # same content when it exists; never rewrite
+                    with open(path, "w") as g:
+                        json.dump(pr["delays"], g)
                 return {"p_hat": pr["p_hat"], "delays": pr["delays"], "delays_path": path, "from": want}
     raise RuntimeError(f"no prior run {want} in {out_path}")
 
@@ -628,7 +658,7 @@ def run_grid(name, out_path, users, r, limit=None):
     print(f"grid {name}: {len(done)} done, {len(cells)} to go", flush=True)
     for i, cell in enumerate(cells[:limit] if limit else cells):
         t = time.time()
-        prior = find_prior(out_path, cell) if needs_prior(cell["arm"]) else None
+        prior = find_prior(*prior_source(name, out_path, cell)) if needs_prior(cell["arm"]) else None
         res = run_one(cell, users, r, prior)
         with open(out_path, "a") as f:
             f.write(json.dumps(res) + "\n")

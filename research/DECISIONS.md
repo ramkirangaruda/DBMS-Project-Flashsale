@@ -138,3 +138,14 @@ Ramkiran decided: speed is a constraint with an explicit knob; count each unreso
 ### D26 (2026-10-31) k6 runs used user ids that do not exist in this database; restarted
 * **What happened:** the first round-2 k6 run (`cwp:1.0`, rep 1) had 406 "other failures", all `404 unknown user or sale.` (now logged per request, D25). `run_local_k6.sh` copied the committed `results/load/users.json`, which `results/load/run_k6.py` exported from the docker deployment's database (300 ids); this database has the 30 users from `scripts/seed.py`, so 270 of the 300 ids do not exist and those buyers' checkouts were refused. This is also the cause of round 1's unexplained ~420 other failures per k6 run (MORNING_REPORT round 1, "Broken").
 * **Decision:** the runner now writes the k6 users file from this database (the same 30 users the Python harness cycles through; the queue is anonymous, so this changes only which user an order belongs to). The partial round-2 output is kept, not used, in `results/fa/k6/round2_v1_unknown_users/`; the k6 runs restarted from scratch. The committed `results/load/users.json` is untouched.
+
+## Round 3 (2026-11-01), after "continue"
+
+Ramkiran said "continue" after round 2. I took that as: work through round 2's open items that bear on the paper's claims, in the same cells, same rules.
+
+### D27 (2026-11-01) Round 3: isolate the weighting, and test a wrong prior
+* **Decision:** two grids, `round3_07` and `round3_04` (pessimistic, ratio 10, seeds 1 to 5, same settings as the frontier grids):
+  * **Weighting, isolated:** `cwc:{1.0,1.25,1.5,2.0}:warm:pace` (count window, warm p, pacing) against the posterior arms with the same start already in the frontier grids (`cwp:{1.0,1.25,1.5}:warm:pace`), plus `cwp:2.0:warm:pace` to complete the pair. Round 2 only had the count window with warm-G, so the posterior-vs-count gap was not isolated.
+  * **Wrong prior:** `cwp:{1.25,2.0}:{warm,warmg}:pace:fromNN`: a warm arm at p 0.7 seeded from a p 0.4 sale, and the reverse. Round 2's warm starts assumed the previous sale looks like this one.
+* **Priors:** from the cold `cwp:1.0` runs already in `frontier07.jsonl` / `frontier04.jsonl` (seed s uses seed s - 1, as in round 2), so a round-3 warm arm gets exactly the prior its frontier counterpart got. No new seeding runs.
+* **Not in round 3:** optimistic strategy, p 1.0, ratio 3. Time; they come next if the above holds up.
