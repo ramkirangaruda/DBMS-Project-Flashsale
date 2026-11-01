@@ -26,6 +26,15 @@ FAMILIES = [
     ("count window + warm G + pacing", lambda a: a.startswith("cwc:") and a.endswith(":warmg:pace"),
      "#1baf7a", "^"),
 ]
+# Round-3 view (D27): the warm-p mechanism, posterior and count side by side,
+# with warm-G kept as the round-2 reference line.
+FAMILIES_WARMP = [
+    ("posterior + warm p + pacing", lambda a: a.startswith("cwp:") and a.endswith(":warm:pace"), "#2a78d6", "o"),
+    ("count window + warm p + pacing", lambda a: a.startswith("cwc:") and a.endswith(":warm:pace"),
+     "#1baf7a", "^"),
+    ("posterior + warm G + pacing (round 2)", lambda a: a.startswith("cwp:") and a.endswith(":warmg:pace"),
+     "#eb6834", "s"),
+]
 INK, MUTED, GRID = "#2b2b29", "#6b6a63", "#e4e3de"
 
 
@@ -104,7 +113,7 @@ def table(summary, src):
     return "\n".join(lines) + "\n"
 
 
-def plot(summary, title, path_prefix):
+def plot(summary, title, path_prefix, families=None):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -116,7 +125,7 @@ def plot(summary, title, path_prefix):
     def errs(v):
         return [[v[0] - v[1]], [v[2] - v[0]]]
 
-    for label, pred, colour, marker in FAMILIES:
+    for label, pred, colour, marker in families or FAMILIES:
         arms = sorted((a for a in summary if pred(a)), key=margin_of)
         if not arms:
             continue
@@ -159,17 +168,26 @@ def plot(summary, title, path_prefix):
     plt.close(fig)
 
 
-def main(src, prefix):
+def main(src, prefix, extra=(), families=None):
     rows = load(src)
+    for path in extra:
+        rows += load(path)
     summary = summarise(rows)
     os.makedirs(os.path.dirname(prefix) or ".", exist_ok=True)
     with open(prefix + ".md", "w") as f:
-        f.write(table(summary, src))
+        f.write(table(summary, " + ".join([src, *extra])))
     c = next(r["cell"] for r in rows)
     plot(summary, f"Futile admissions vs sell-out time: {c['strategy']}, p_show {c['p_show']}, "
-                  f"demand ratio {c['ratio']}, {c['stock']} units", prefix)
+                  f"demand ratio {c['ratio']}, {c['stock']} units", prefix, families)
     print(f"wrote {prefix}.md, .png, .svg from {len(rows)} runs")
 
 
 if __name__ == "__main__":
-    main(sys.argv[1], sys.argv[2])
+    # python -m scripts.fa_frontier <src.jsonl> <prefix> [--warmp extra.jsonl ...]
+    args = sys.argv[1:]
+    warmp = "--warmp" in args
+    if warmp:
+        i = args.index("--warmp")
+        main(args[0], args[1], args[i + 1:], FAMILIES_WARMP)
+    else:
+        main(args[0], args[1])

@@ -149,3 +149,7 @@ Ramkiran said "continue" after round 2. I took that as: work through round 2's o
   * **Wrong prior:** `cwp:{1.25,2.0}:{warm,warmg}:pace:fromNN`: a warm arm at p 0.7 seeded from a p 0.4 sale, and the reverse. Round 2's warm starts assumed the previous sale looks like this one.
 * **Priors:** from the cold `cwp:1.0` runs already in `frontier07.jsonl` / `frontier04.jsonl` (seed s uses seed s - 1, as in round 2), so a round-3 warm arm gets exactly the prior its frontier counterpart got. No new seeding runs.
 * **Not in round 3:** optimistic strategy, p 1.0, ratio 3. Time; they come next if the above holds up.
+
+### D28 (2026-11-01) Round 3b: fill the warm-p margin gap
+* **What happened:** the round-3 warm-p frontier figure (`results/fa/frontier/frontier07_warmp.png`) shows warm p has no point between margin 1.0 (34.4 s, 3 futile at p 0.7) and 1.25 (9.3 s, 22), while warm-G has its low-futile points there (1.25: 15.3 s, 7; 1.5: 12.6 s, 15). So "warm p matches or beats warm-G along the frontier", as I wrote it in round 2 and in the round-3 decision card, was not supported in that region: it was a gap in the sweep, not a measurement.
+* **Decision:** run `cwp:{1.05,1.1,1.15}:warm:pace` at p 0.7 and 0.4 (grids `round3b_07`, `round3b_04`, 30 runs, same priors) and compare again before recommending either start.
