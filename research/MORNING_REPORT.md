@@ -1,9 +1,48 @@
 # Morning report: futility-aware admission, overnight run of 2026-10-30
 
-> Round 2 (frontier grids at p 0.7 and 0.4, k6) added 13:30 UTC on 2026-10-31, on top. Round 1: final first-pass numbers (360 of 360 runs), updated 02:40 UTC; P6 added 03:15 UTC.
+> Round 3 (weighting isolated, wrong priors) added 06:30 UTC on 2026-11-01, on top. Round 2 (frontier grids at p 0.7 and 0.4, k6) added 13:30 UTC on 2026-10-31. Round 1: final first-pass numbers (360 of 360 runs), updated 02:40 UTC; P6 added 03:15 UTC.
 
 Branch: `research/futility-admission` (pushed; nothing pushed to `main`, no force-push, no history rewritten).
 Plan: https://claude.ai/artifact/LxT22SaYwRGUTc3Wr79bBm . Every decision with its reasons: [`DECISIONS.md`](DECISIONS.md). How to run everything: [`README.md`](README.md).
+
+# Round 3 (2026-11-01): is it the weighting, and what a wrong prior does
+
+> Design in DECISIONS.md D27. 90 runs (`results/fa/grid/round3_07.jsonl`, `round3_04.jsonl`), invariant held in 90 of 90. Paired tables: [`results/fa/grid/round3_summary.md`](../results/fa/grid/round3_summary.md) (`python -m scripts.fa_round3`). Pessimistic, demand ratio 10, 200 units, medians [95% bootstrap CI] over 5 seeds.
+
+## Headline
+
+**With the same warm-p start, the count window is as good as the posterior weighting everywhere except margin 1.0.** Round 2's "posterior helps at p 0.4" compared a count window with a warm-G start against a posterior window with a warm-G start; with a warm-p start for both, the gap disappears at margins 1.25 to 2.0. The posterior weighting helps only at margin 1.0, where the count window stalls on the last units:
+
+| | p 0.7: count | p 0.7: posterior | p 0.4: count | p 0.4: posterior |
+|---|---|---|---|---|
+| margin 1.0, time to sell out, s | 65.3 [37.1, 90.0] | 34.4 [33.5, 43.1] | 66.3 [31.0, 90.0] | 37.9 [35.0, 40.5] |
+| margin 1.0, futile | 2 [1, 5] | 3 [2, 7] | 2 [1, 3] | 4 [2, 19] |
+| margin 1.25, time, s / futile | 9.4 / 23 | 9.3 / 22 | 13.2 / 12 | 17.2 / 7 |
+| margin 1.5, time, s / futile | 7.7 / 48 | 8.2 / 41 | 8.9 / 49 | 10.0 / 47 |
+| margin 2.0, time, s / futile | 6.8 / 103 | 7.5 / 106 | 12.4 / 96 | 13.3 / 103 |
+
+(CIs for the margin 1.25 to 2.0 rows are in the summary file; they overlap pairwise in every row.) My reading, not tested separately: with a warm p and no seeded G, the posterior window has no G until a cohort matures at about 30 s, so before then it is a count window; after 30 s the age discount releases the slots held by old unshown claims, which is what rescues the margin 1.0 tail. **For the paper this means the frontier's gain comes from the warm p and pacing; the posterior weighting is an endgame fix at the strict margin, not the source of the frontier.**
+
+**A wrong prior hurts in the direction you would expect for warm p, and unpredictably for warm-G.**
+
+| arm | p 0.7 sale, right prior (p 0.7) | p 0.7 sale, wrong prior (p 0.4) | p 0.4 sale, right prior (p 0.4) | p 0.4 sale, wrong prior (p 0.7) |
+|---|---|---|---|---|
+| warm p, margin 1.25 | 9.3 s, 22 futile | 6.9 s, 126 [58, 160] futile | 17.2 s, 7 futile | 35.5 s, 27 [12, 31] futile |
+| warm p, margin 2.0 | 7.5 s, 106 futile | 7.6 s, 247 [125, 302] futile | 13.3 s, 103 futile | 31.2 s, 7 [7, 17] futile |
+| warm-G, margin 1.25 | 15.3 s, 7 futile | 31.4 s, 3 [1, 4] futile | 32.9 s, 6 futile | 22.2 s, 2 [1, 13] futile |
+| warm-G, margin 2.0 | 9.2 s, 50 futile | 7.6 s, 47 [35, 55] futile | 21.8 s, 5 futile | 14.0 s, 191 [6, 393] futile |
+
+* **Warm p, prior too low** (seeded from a p 0.4 sale, run at p 0.7): futile admissions rise about 2 to 6 times (22 to 126 at margin 1.25, 106 to 247 at 2.0), still far below the baselines' about 1,190 in this cell.
+* **Warm p, prior too high** (from p 0.7, run at p 0.4): it sells out about 2 times slower (17.2 to 35.5 s, 13.3 to 31.2 s), close to the cold arm (cold `cwp:1.25:pace` at p 0.4: 35.7 s).
+* **Warm-G does not move consistently.** Sometimes the wrong prior is slower with fewer futile (p 0.7, 1.25), sometimes faster with fewer (p 0.4, 1.25), and once much worse with a very wide CI (p 0.4, 2.0: 191 [6, 393] futile). I can't explain this from the data I have; together with round 2's results (warm-G adds nothing over warm p, fails without pacing) I would drop warm-G from the paper's mechanism and keep warm p.
+
+## What this changes
+
+* The mechanism worth writing up is **count or posterior window + warm p + pacing**, with the margin as the knob. The posterior weighting is worth keeping for its margin 1.0 endgame, not as the headline.
+* A warm start needs a guard for a shifted p. The cheapest candidate is a prior with a small pseudo-count so the sale's own evidence overrides it quickly. That is untested.
+* Not run yet: optimistic strategy, p 1.0, demand ratio 3 (D27).
+
+---
 
 # Round 2 (2026-10-31): the frontier, warm starts, latency split, pacing, k6
 
@@ -38,7 +77,7 @@ In the p 0.4 figure the AIMD marker sits under the Protego-style marker (37.6 s 
 
 * **The warm p does most of the work, not the age discount.** A warm p alone (`cwp:<m>:warm:pace`, no seeded G) is as good or better than warm-G at the points measured: at p 0.7, margin 1.25 gives 9.3 s with 22 futile, against warm-G's 9.2 s with 50 at margin 2.0; at p 0.4, margin 1.25 gives 17.2 s with 7, against warm-G's 16.1 s with 7 at margin 3.0 and 32.9 s with 6 at 1.25. Warm-G is the more conservative of the two at the same margin, so its curve is shifted, not lower. I don't have evidence that the seeded G improves the frontier over a warm p.
 * **Cold posterior stays slow.** With p = 1 until a cohort matures (about 30 s), cold `cwp` takes 34.7 to 40.2 s to sell out at margins 0.9 to 1.25 at p 0.7, and at p 0.4 it over-admits as well (116 to 237 futile at margins 0.9 to 1.25, unpaced). Ramkiran's structural point holds: the cold window has nothing to discount a claim's age with until a cohort matures, so the age weighting cannot act early in a cold sale.
-* **Posterior against count weighting, same warm-G start and pacing.** At the same margin the posterior window sells out faster: p 0.7 margin 1.25, 15.3 s vs 38.1 s (futile 7 vs 5); p 0.4 margin 2.0, 21.8 s vs 38.0 s (5 vs 10). At p 0.7 the two curves end up close along the frontier (count margin 2.0: 8.5 s with 40 futile; posterior 2.0: 9.2 s with 50). At p 0.4 the count window never gets below 38.0 s, and at margin 1.0 does not sell out by the 90 s deadline (97.5% sold), so there the posterior weighting does help. I only ran the count window with the warm-G start, so the cause of the gap is not isolated.
+* **Posterior against count weighting, same warm-G start and pacing.** At the same margin the posterior window sells out faster: p 0.7 margin 1.25, 15.3 s vs 38.1 s (futile 7 vs 5); p 0.4 margin 2.0, 21.8 s vs 38.0 s (5 vs 10). At p 0.7 the two curves end up close along the frontier (count margin 2.0: 8.5 s with 40 futile; posterior 2.0: 9.2 s with 50). At p 0.4 the count window never gets below 38.0 s, and at margin 1.0 does not sell out by the 90 s deadline (97.5% sold), so there the posterior weighting does help. I only ran the count window with the warm-G start, so the cause of the gap is not isolated. **Round 3 isolated it: with a warm-p start for both, the gap disappears except at margin 1.0 (see Round 3).**
 * **Without pacing, warm-G fails completely.** `cwp:<m>:warmg` (no pacing) admits all 2,000 buyers with 1,192 (p 0.7) and 613 to 614 (p 0.4) futile, i.e. no better than S-K. Under the all-at-once burst, shows reach the door late and the seeded G (from a calm sale) reads them as no-shows (D22). This is a real fragility of age-based inference when the observation path slows under load.
 * **Pacing cuts gate wait to about zero and moves client p95 from seconds to hundreds of ms.** Cold posterior at margin 1.25, unpaced vs paced: p 0.7, winner gate wait 0.24 s vs 0.00 s mean, client p95 4,499 ms vs 246 ms, sell-out 34.7 s vs 34.2 s, futile 5 vs 13; p 0.4, client p95 6,918 vs 917 ms, futile 116 vs 48.
 
