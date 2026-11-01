@@ -585,6 +585,12 @@ for _name, _p, _other in (("round3_07", 0.7, "04"), ("round3_04", 0.4, "07")):
         "p_show": [_p], "ratio": [10], "seeds": [1, 2, 3, 4, 5],
         "stock": 200, "delay": "lognormal:2,1", "p_pay": 1.0, "deadline_s": 90.0}
 
+# Round 3b (D28): warm p had no margin between 1.0 and 1.25, where warm-G
+# has its low-futile points; fill that gap before comparing the two.
+for _name, _p in (("round3b_07", 0.7), ("round3b_04", 0.4)):
+    GRIDS[_name] = {**GRIDS["round3_" + _name[-2:]],
+                    "arms_by_strategy": {"pessimistic": [f"cwp:{m}:warm:pace" for m in (1.05, 1.1, 1.15)]}}
+
 PRIOR_SOURCE_ARM = "cwp:1.0"
 
 
