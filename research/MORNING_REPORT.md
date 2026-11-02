@@ -1,9 +1,33 @@
 # Morning report: futility-aware admission, overnight run of 2026-10-30
 
-> Round 4 (p 1.0, optimistic) added 11:05 UTC on 2026-11-01, on top. Round 3 (weighting isolated, wrong priors) added 06:30 UTC; round 3b (warm-p margin gap) added 06:45 UTC. Round 2 (frontier grids at p 0.7 and 0.4, k6) added 13:30 UTC on 2026-10-31. Round 1: final first-pass numbers (360 of 360 runs), updated 02:40 UTC; P6 added 03:15 UTC.
+> Round 5 (demand ratio 3) added on 2026-11-02, on top. Round 4 (p 1.0, optimistic) added 11:05 UTC on 2026-11-01. Round 3 (weighting isolated, wrong priors) added 06:30 UTC; round 3b (warm-p margin gap) added 06:45 UTC. Round 2 (frontier grids at p 0.7 and 0.4, k6) added 13:30 UTC on 2026-10-31. Round 1: final first-pass numbers (360 of 360 runs), updated 02:40 UTC; P6 added 03:15 UTC.
 
 Branch: `research/futility-admission` (pushed; nothing pushed to `main`, no force-push, no history rewritten).
 Plan: https://claude.ai/artifact/LxT22SaYwRGUTc3Wr79bBm . Every decision with its reasons: [`DECISIONS.md`](DECISIONS.md). How to run everything: [`README.md`](README.md).
+
+# Round 5 (2026-11-02): demand ratio 3
+
+> Design in DECISIONS.md D30. 81 runs (`results/fa/grid/main07r3.jsonl`), invariant held in 81 of 81. Figure and full table: [`main07r3`](../results/fa/frontier/main07r3.md) ([png](../results/fa/frontier/main07r3.png)). Pessimistic, p_show 0.7, demand ratio 3 (600 buyers, 200 units), medians [95% bootstrap CI] over 5 seeds.
+
+| arm | time to sell out, s | futile | admitted |
+|---|---|---|---|
+| S-K:40 | 6.5 [6.4, 6.5] | 220 [219, 233] | 600 [600, 600] |
+| AIMD | 11.8 [10.3, 12.8] | 220 [219, 233] | 600 [600, 600] |
+| Protego-style 100 ms | 10.7 [10.2, 12.7] | 220 [219, 233] | 600 [600, 600] |
+| Breakwater-style | 10.5 [9.9, 13.2] | 220 [219, 232] | 600 [600, 600] |
+| count window, oracle p | 23.5 [11.5, 36.6] | 4 [0, 13] | 287 [287, 296] |
+| warm p, margin 1.25 | 10.5 [9.1, 12.9] | 23 [10, 29] | 310 [301, 319] |
+| warm p, margin 2.0 | 6.9 [6.4, 7.6] | 74 [55, 107] | 378 [369, 435] |
+| warm-G, margin 1.25 | 17.5 [14.2, 22.1] | 5 [2, 13] | 291 [276, 307] |
+| warm-G, margin 2.0 | 8.1 [7.7, 8.7] | 41 [35, 44] | 338 [333, 341] |
+| warm-G, margin 3.0 | 7.0 [6.7, 8.0] | 78 [69, 159] | 391 [381, 502] |
+
+* **At ratio 3 the mechanism matches S-K:40 on speed within the CIs**: warm p at margin 2.0 sells out in 6.9 [6.4, 7.6] s against 6.5 [6.4, 6.5] s, with 74 futile against 220. Warm-G at margin 3.0: 7.0 s with 78. This is the only cell where any window arm reaches S-K's sell-out time.
+* With less excess demand, every baseline admits all 600 buyers, so their futile count is fixed at about 220; the window arms have 3 to 78 depending on start and margin.
+* The warm-p vs warm-G pattern is the same as at ratio 10: warm-G gives the lower-futile points at a given speed (e.g. 8.1 s with 41 vs warm p's 7.7 s with 48 at margin 1.5).
+* One run (`cwp:1.1:warm:pace`, seed 4) sold 199 of 200: the run ended before the deadline with every buyer resolved and one unit unsold.
+
+---
 
 # Round 4 (2026-11-01): two more cells, p 1.0 and the optimistic strategy
 
