@@ -1,0 +1,222 @@
+{
+ "admit_3": 3,
+ "control_snapshot": {
+  "config": null,
+  "enabled": false,
+  "mode": "static",
+  "observed_throughput_per_s": 0.0,
+  "window": null
+ },
+ "door": [
+  {
+   "body": {
+    "message": "Not yet admitted. Join the queue at POST /queue/join/<uuid>, poll GET /queue/status until admitted, then resend this request with the X-Admission-Token header.",
+    "order_id": null,
+    "status": "failed",
+    "strategy": "pessimistic"
+   },
+   "code": 403,
+   "headers": {
+    "x-admission-required": "true"
+   }
+  },
+  {
+   "body": {
+    "message": "Admission token is unknown, expired, or issued for a different sale. Rejoin the queue at POST /queue/join/<uuid>.",
+    "order_id": null,
+    "status": "failed",
+    "strategy": "pessimistic"
+   },
+   "code": 403,
+   "headers": {
+    "x-admission-required": "true"
+   }
+  },
+  {
+   "body": {
+    "message": "Version conflict",
+    "order_id": null,
+    "status": "failed",
+    "strategy": "x"
+   },
+   "code": 409,
+   "headers": {}
+  },
+  {
+   "body": {
+    "message": "ok",
+    "order_id": "<hex>",
+    "status": "confirmed",
+    "strategy": "x"
+   },
+   "code": 200,
+   "headers": {}
+  },
+  {
+   "body": {
+    "message": "This admission has already been used for a purchase.",
+    "order_id": null,
+    "status": "failed",
+    "strategy": "pessimistic"
+   },
+   "code": 403,
+   "headers": {
+    "x-admission-refused": "spent"
+   }
+  },
+  {
+   "body": {
+    "message": "gone",
+    "order_id": null,
+    "status": "sold_out",
+    "strategy": "x"
+   },
+   "code": 409,
+   "headers": {}
+  },
+  {
+   "body": {
+    "message": "This admission was issued to a different buyer. Join the queue yourself.",
+    "order_id": null,
+    "status": "failed",
+    "strategy": "pessimistic"
+   },
+   "code": 403,
+   "headers": {
+    "x-admission-refused": "other_buyer"
+   }
+  },
+  {
+   "body": {
+    "message": "gone",
+    "order_id": null,
+    "status": "sold_out",
+    "strategy": "x"
+   },
+   "code": 409,
+   "headers": {}
+  }
+ ],
+ "estimated_wait_s": [
+  0.0,
+  0.5,
+  0.5,
+  1.5
+ ],
+ "join": [
+  {
+   "admitted": false,
+   "estimated_wait_s": 0.5,
+   "position": 1,
+   "queue_token": "<hex>",
+   "sale_id": "<uuid>"
+  },
+  {
+   "admitted": false,
+   "estimated_wait_s": 0.5,
+   "position": 2,
+   "queue_token": "<hex>",
+   "sale_id": "<uuid>"
+  },
+  {
+   "admitted": false,
+   "estimated_wait_s": 0.5,
+   "position": 3,
+   "queue_token": "<hex>",
+   "sale_id": "<uuid>"
+  },
+  {
+   "admitted": false,
+   "estimated_wait_s": 0.5,
+   "position": 4,
+   "queue_token": "<hex>",
+   "sale_id": "<uuid>"
+  },
+  {
+   "admitted": false,
+   "estimated_wait_s": 0.5,
+   "position": 5,
+   "queue_token": "<hex>",
+   "sale_id": "<uuid>"
+  }
+ ],
+ "keyspace": {
+  "admission:<hex>": {
+   "string/ttl": 3
+  },
+  "admission:state:<hex>": {
+   "hash/ttl": 3
+  },
+  "queue:granted:22222222-2222-2222-2222-222222222222:<hex>": {
+   "string/ttl": 3
+  },
+  "queue:tokens:22222222-2222-2222-2222-222222222222": {
+   "set/ttl": 1
+  },
+  "queue:z:22222222-2222-2222-2222-222222222222": {
+   "zset/persist": 1
+  }
+ },
+ "status": [
+  {
+   "admission_token": "<hex>",
+   "admitted": true,
+   "estimated_wait_s": 0.0,
+   "expires_in_s": 30,
+   "position": 0,
+   "queue_token": "<hex>",
+   "sale_id": "<uuid>"
+  },
+  {
+   "admission_token": "<hex>",
+   "admitted": true,
+   "estimated_wait_s": 0.0,
+   "expires_in_s": 30,
+   "position": 0,
+   "queue_token": "<hex>",
+   "sale_id": "<uuid>"
+  },
+  {
+   "admission_token": "<hex>",
+   "admitted": true,
+   "estimated_wait_s": 0.0,
+   "expires_in_s": 30,
+   "position": 0,
+   "queue_token": "<hex>",
+   "sale_id": "<uuid>"
+  },
+  {
+   "admitted": false,
+   "ahead_of_you": 0,
+   "estimated_wait_s": 0.5,
+   "position": 1,
+   "queue_depth": 2,
+   "queue_token": "<hex>",
+   "sale_id": "<uuid>"
+  },
+  {
+   "admitted": false,
+   "ahead_of_you": 1,
+   "estimated_wait_s": 0.5,
+   "position": 2,
+   "queue_depth": 2,
+   "queue_token": "<hex>",
+   "sale_id": "<uuid>"
+  },
+  {
+   "admitted": false,
+   "estimated_wait_s": null,
+   "expired": true,
+   "message": "Unknown or expired queue token -- rejoin the queue.",
+   "position": null,
+   "queue_token": "no-such-token",
+   "sale_id": "<uuid>"
+  }
+ ],
+ "validate": [
+  true,
+  true,
+  true,
+  false
+ ]
+}

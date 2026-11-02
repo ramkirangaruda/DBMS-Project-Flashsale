@@ -65,6 +65,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 from app import admission_control as control
+from app import claim_window, db_limiter
 from app.metrics import ADMISSION_REJECTED, CHECKOUT_IN_FLIGHT
 from app.queue import ADMISSION_TTL_S, async_redis, validate
 
@@ -81,6 +82,7 @@ HEADER = "x-admission-token"
 #
 # It is not a feature. In anything real the door does not have an off switch.
 ENFORCED = os.getenv("ADMISSION_ENFORCED", "true").lower() not in ("false", "0", "no")
+TIMING_HEADERS = os.getenv("FA_TIMING_HEADERS", "off").strip().lower() in ("on", "1", "true")
 
 STATE_KEY = "admission:state:{token}"
 STATE_TTL_S = max(600, ADMISSION_TTL_S * 20)     # outlives any renewed grant
@@ -235,6 +237,24 @@ class AdmissionMiddleware(BaseHTTPMiddleware):
         # ~K concurrent requests -- measured here rather than asserted,
         # because this is the only point that sees every admitted request
         # enter and leave.
+        sale_id = request.query_params.get("sale_id")
+        if claimed:
+            # Futility-aware admission: the buyer showed up (first one counts).
+            claim_window.on_show(ar, sale_id, token)
+        gated = False
+        waited_ms = 0.0
+        if db_limiter.ENABLED and ar is not None:
+            # Decoupled DB concurrency limit: wait on the event loop for a
+            # slot BEFORE the handler takes a thread. See app/db_limiter.py.
+            gated, waited_ms = await db_limiter.acquire(ar)
+            if not gated:
+                if claimed:
+                    try:
+                        await release(ar, token, False)
+                    except Exception:                          # noqa: BLE001, S110
+                        pass
+                return _json_response(strategy, "Checkout is busy -- try again shortly.",
+                                      503, {"Retry-After": "1"})
         CHECKOUT_IN_FLIGHT.labels(strategy=strategy).inc()
         measuring = control.ENABLED and ar is not None
         if measuring:
@@ -242,14 +262,23 @@ class AdmissionMiddleware(BaseHTTPMiddleware):
         started = time.perf_counter()
         confirmed = False
         outcome = "error"
+        body_status = None
+        status_code = 500
         try:
             response = await call_next(request)
+            status_code = response.status_code
             body = b"".join([chunk async for chunk in response.body_iterator])
             body_status = _body_status(body)
             confirmed = body_status == "confirmed"
             outcome = control.classify(response.status_code, body_status)
             headers = dict(response.headers)
             headers.pop("content-length", None)       # rebuilt from the buffered body
+            if TIMING_HEADERS:
+                # Evaluation only (FA_TIMING_HEADERS=on): lets a load generator
+                # split a buyer's admission-to-verdict time into gate wait and
+                # handler (DB) time per request.
+                headers["X-FA-Gate-Ms"] = f"{waited_ms:.1f}"
+                headers["X-FA-Handler-Ms"] = f"{(time.perf_counter() - started) * 1000.0:.1f}"
             return Response(content=body, status_code=response.status_code,
                             headers=headers,
                             media_type=response.media_type or "application/json")
@@ -258,6 +287,12 @@ class AdmissionMiddleware(BaseHTTPMiddleware):
             if measuring:
                 await control.leave(ar)
                 control.record(ar, (time.perf_counter() - started) * 1000.0, outcome)
+            if gated:
+                await db_limiter.release(ar)
+                db_limiter.record(ar, (time.perf_counter() - started) * 1000.0, outcome,
+                                  waited_ms=waited_ms)
+            if claimed:
+                claim_window.on_outcome(ar, sale_id, token, status_code, body_status)
             if claimed:
                 try:
                     await release(ar, token, confirmed)
@@ -268,4 +303,8 @@ class AdmissionMiddleware(BaseHTTPMiddleware):
 def install(app, redis_client):
     """One-liner used by app/main.py. Keeps the wiring in one place."""
     app.add_middleware(AdmissionMiddleware, redis_client=redis_client)
+    # Protego-style baseline (evaluation only; off unless
+    # PROTEGO_LOCK_TIMEOUT_MS is set). See app/protego.py.
+    from app import protego
+    protego.install(app)
     return app

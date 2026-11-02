@@ -1,0 +1,3 @@
+# Per-run server logs (empty at log_level=warning); scratch, not results.
+*
+!.gitignore

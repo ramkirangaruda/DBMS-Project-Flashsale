@@ -49,7 +49,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import text
 
-from app import admission_control
+from app import admission_control, claim_window, db_limiter, stock_view
 from app.metrics import (
     QUEUE_ADMISSION_LEADER,
     QUEUE_ADMITS,
@@ -92,6 +92,7 @@ GRANT_KEY = "queue:granted:{sale_id}:{queue_token}"
 TOKENS_KEY = "queue:tokens:{sale_id}"
 ADMISSION_KEY = "admission:{token}"
 ADMISSION_LEADER_KEY = "queue:admission:leader"
+NOTIFIED_KEY = "queue:notified:{token}"   # first notification; fixed-TTL mode only
 
 router = APIRouter(prefix="/queue", tags=["queue"])
 
@@ -181,10 +182,30 @@ async def status(r, sale_id, queue_token):
         #
         # Counting the window from notification makes the grant mean what it
         # says -- "you have 30 seconds to shop" -- under any latency.
-        pipe = r.pipeline()
-        pipe.expire(ADMISSION_KEY.format(token=grant), ADMISSION_TTL_S)
-        pipe.expire(grant_key, ADMISSION_TTL_S)
-        await pipe.execute()
+        #
+        # FIXED-TTL MODE (FA_TTL_MODE=fixed, always on with the claim window):
+        # the clock still starts at the FIRST notification, but later polls
+        # do not push it back. The claim window's show-rate estimator needs
+        # a fixed horizon -- under renewal a buyer who keeps polling would
+        # hold their slot forever and never become "fully observed".
+        expires_in_s = ADMISSION_TTL_S
+        if claim_window.TTL_FIXED:
+            now = time.time()
+            first = await r.set(NOTIFIED_KEY.format(token=grant), now, nx=True,
+                                ex=ADMISSION_TTL_S * 4)
+            pipe = r.pipeline()
+            if first:
+                pipe.expire(ADMISSION_KEY.format(token=grant), ADMISSION_TTL_S)
+                pipe.expire(grant_key, ADMISSION_TTL_S)
+                claim_window.note_notified(pipe, sale_id, grant, now, ADMISSION_TTL_S)
+                await pipe.execute()
+            else:
+                expires_in_s = max(0, await r.ttl(grant_key))
+        else:
+            pipe = r.pipeline()
+            pipe.expire(ADMISSION_KEY.format(token=grant), ADMISSION_TTL_S)
+            pipe.expire(grant_key, ADMISSION_TTL_S)
+            await pipe.execute()
         return {
             "sale_id": sale_id,
             "queue_token": queue_token,
@@ -192,7 +213,7 @@ async def status(r, sale_id, queue_token):
             "admission_token": grant,
             "position": 0,
             "estimated_wait_s": 0.0,
-            "expires_in_s": ADMISSION_TTL_S,
+            "expires_in_s": expires_in_s,
         }
 
     zkey = Z_KEY.format(sale_id=sale_id)
@@ -209,6 +230,19 @@ async def status(r, sale_id, queue_token):
         }
 
     position = rank + 1
+    if claim_window.SOLDOUT_NOTIFY and await r.get(claim_window.SOLDOUT_KEY.format(sale_id=sale_id)):
+        # Futility-aware sold-out notice (FA_SOLDOUT_NOTIFY=on): every unit
+        # is sold and no admitted buyer can still free one, so admitting
+        # this buyer later could only end in "sold out". Say so now.
+        return {
+            "sale_id": sale_id,
+            "queue_token": queue_token,
+            "admitted": False,
+            "sold_out": True,
+            "position": position,
+            "estimated_wait_s": None,
+            "message": "Sold out -- every unit has been sold.",
+        }
     return {
         "sale_id": sale_id,
         "queue_token": queue_token,
@@ -292,6 +326,7 @@ def admit(r, sale_id, batch=None):
         QUEUE_ADMITS.labels(sale_id=sale_id).inc()
     pipe.expire(tokens_key, ADMISSION_TTL_S * 4)
     admission_control.track_grants(pipe, issued, now + ADMISSION_TTL_S)
+    claim_window.track_grants(pipe, sale_id, issued, now, ADMISSION_TTL_S)
     pipe.execute()
 
     return len(popped)
@@ -335,6 +370,7 @@ async def admit_async(r, sale_id, batch=None):
         QUEUE_ADMITS.labels(sale_id=sale_id).inc()
     pipe.expire(tokens_key, ADMISSION_TTL_S * 4)
     admission_control.track_grants(pipe, issued, now + ADMISSION_TTL_S)
+    claim_window.track_grants(pipe, sale_id, issued, now, ADMISSION_TTL_S)
     await pipe.execute()
 
     return len(popped)
@@ -547,8 +583,11 @@ def start_admission_worker(r, session_factory, interval_s=None):
 
     # Closed-loop admission needs a faster clock than the static 500 ms batch
     # cadence: the window is refilled as checkouts finish, not once per tick.
-    interval_s = interval_s or (admission_control.CFG.tick_s if admission_control.ENABLED
+    interval_s = interval_s or (admission_control.CFG.tick_s
+                                if (admission_control.ENABLED or claim_window.ENABLED
+                                    or db_limiter.ENABLED)
                                 else ADMIT_INTERVAL_S)
+    stock_view.start(r)
 
     def refresher():
         while True:
@@ -589,6 +628,11 @@ def start_admission_worker(r, session_factory, interval_s=None):
                 is_leader = _try_lead(r)
                 QUEUE_ADMISSION_LEADER.set(1 if is_leader else 0)
                 sale_ids = _queued_sale_ids(r)
+                if claim_window.ENABLED:
+                    # Keep ticking a sale whose queue has drained while it
+                    # still has unresolved admissions: expiries must be
+                    # processed and the sold-out flag kept current.
+                    sale_ids = sorted(set(sale_ids) | set(claim_window.active_sales(r)))
                 depths = {sid: r.zcard(Z_KEY.format(sale_id=sid)) for sid in sale_ids}
                 # Adaptive admission (ADMISSION_CONTROL=aimd): the leader
                 # turns the live congestion window into a budget of "how many
@@ -599,11 +643,25 @@ def start_admission_worker(r, session_factory, interval_s=None):
                 budget = None
                 if is_leader:
                     budget = admission_control.leader_tick(r, sum(depths.values()))
+                    # Decoupled DB concurrency limit (DB_LIMITER=aimd): it
+                    # gates checkouts at the door, not admission, so it only
+                    # needs its control step run here.
+                    db_limiter.leader_tick(r, sum(depths.values()))
                 else:
                     admission_control.refresh_cache(r)
                 for sale_id in sale_ids:
                     if is_leader:
-                        if budget is None:
+                        # Claim window (CLAIM_WINDOW != off): never more
+                        # unresolved buyers than could still win. Combined
+                        # with the AIMD budget by taking the smaller.
+                        cw = claim_window.leader_tick(r, sale_id, ADMISSION_TTL_S)
+                        if cw is not None:
+                            allowed = cw if budget is None else min(cw, budget)
+                            if allowed > 0:
+                                got = admit(r, sale_id, allowed)
+                                if budget is not None:
+                                    budget -= got
+                        elif budget is None:
                             admit(r, sale_id)
                         elif budget > 0:
                             budget -= admit(r, sale_id, budget)
@@ -672,6 +730,10 @@ def queue_control_reset():
     again). Benchmarks call this between arms so one run's rate does not leak
     into the next."""
     admission_control.reset_state(_redis)
+    if claim_window.ENABLED:
+        claim_window.reset(_redis)
+    if db_limiter.ENABLED:
+        db_limiter.reset(_redis)
     return {"reset": True, "mode": admission_control.snapshot()["mode"]}
 
 
@@ -682,7 +744,14 @@ def queue_control():
     state = None
     if admission_control.ENABLED:
         state = admission_control.asdict(admission_control.load_state(_redis))
-    return {**admission_control.snapshot(), "state": state}
+    out = {**admission_control.snapshot(), "state": state}
+    if claim_window.ENABLED:
+        out["claim_window"] = {sid: claim_window.snapshot(_redis, sid)
+                               for sid in sorted(set(_queued_sale_ids(_redis))
+                                                 | set(claim_window.active_sales(_redis)))}
+    if db_limiter.ENABLED:
+        out["db_limiter"] = db_limiter.snapshot(_redis)
+    return out
 
 
 @router.get("/config")

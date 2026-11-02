@@ -1,0 +1,2733 @@
+{
+ "args": {
+  "strategy": "optimistic",
+  "stock": 600,
+  "oversubscribe": 1.15,
+  "arms": "static:10,static:20,static:40,static:80,static:160,aimd",
+  "repeats": 3,
+  "db_delay_ms": 0.0,
+  "join_mode": "redis",
+  "out": "results/fa/p0/aimd_optimistic_native.json"
+ },
+ "summary": [
+  {
+   "arm": "static:10",
+   "reps": 3,
+   "units_sold_pct": 100.0,
+   "time_to_sell_out_s": 30.3,
+   "throughput": 20.3,
+   "p50_ms": 36.9,
+   "p95_ms": 62.3,
+   "p99_ms": 80.8,
+   "srv_p50_ms": 20.9,
+   "srv_p95_ms": 47.1,
+   "peak_concurrent": 10,
+   "5xx": 0,
+   "expired": 0,
+   "occ_retries": 732,
+   "invariant_ok": true
+  },
+  {
+   "arm": "static:20",
+   "reps": 3,
+   "units_sold_pct": 100.0,
+   "time_to_sell_out_s": 15.1,
+   "throughput": 41.1,
+   "p50_ms": 67.9,
+   "p95_ms": 134.8,
+   "p99_ms": 224.7,
+   "srv_p50_ms": 37.9,
+   "srv_p95_ms": 92.3,
+   "peak_concurrent": 20,
+   "5xx": 0,
+   "expired": 0,
+   "occ_retries": 832,
+   "invariant_ok": true
+  },
+  {
+   "arm": "static:40",
+   "reps": 3,
+   "units_sold_pct": 100.0,
+   "time_to_sell_out_s": 8.3,
+   "throughput": 77.5,
+   "p50_ms": 473.7,
+   "p95_ms": 1405.2,
+   "p99_ms": 2221.0,
+   "srv_p50_ms": 14.9,
+   "srv_p95_ms": 236.2,
+   "peak_concurrent": 120,
+   "5xx": 0,
+   "expired": 0,
+   "occ_retries": 398,
+   "invariant_ok": true
+  },
+  {
+   "arm": "static:80",
+   "reps": 3,
+   "units_sold_pct": 100.0,
+   "time_to_sell_out_s": 32.2,
+   "throughput": 19.2,
+   "p50_ms": 3932.0,
+   "p95_ms": 9530.6,
+   "p99_ms": 11913.3,
+   "srv_p50_ms": 729.1,
+   "srv_p95_ms": 2296.6,
+   "peak_concurrent": 614,
+   "5xx": 0,
+   "expired": 59,
+   "occ_retries": 1495,
+   "invariant_ok": true
+  },
+  {
+   "arm": "static:160",
+   "reps": 3,
+   "units_sold_pct": 42.2,
+   "time_to_sell_out_s": 33.2,
+   "throughput": 8.0,
+   "p50_ms": 5647.1,
+   "p95_ms": 13628.6,
+   "p99_ms": 14449.2,
+   "srv_p50_ms": 1445.8,
+   "srv_p95_ms": 2394.6,
+   "peak_concurrent": 638,
+   "5xx": 0,
+   "expired": 428,
+   "occ_retries": 1857,
+   "invariant_ok": true
+  },
+  {
+   "arm": "aimd",
+   "reps": 3,
+   "units_sold_pct": 100.0,
+   "time_to_sell_out_s": 33.0,
+   "throughput": 18.6,
+   "p50_ms": 14.5,
+   "p95_ms": 23.2,
+   "p99_ms": 33.3,
+   "srv_p50_ms": 8.1,
+   "srv_p95_ms": 21.2,
+   "peak_concurrent": 5,
+   "5xx": 0,
+   "expired": 0,
+   "occ_retries": 305,
+   "invariant_ok": true
+  }
+ ],
+ "runs": {
+  "static:10": [
+   {
+    "arm": "static:10",
+    "strategy": "optimistic",
+    "buyers": 690,
+    "stock": 600,
+    "confirmed": 600,
+    "units_sold_pct": 100.0,
+    "outcomes": {
+     "confirmed": 600,
+     "sold_out": 90
+    },
+    "time_to_sell_out_s": 29.86,
+    "throughput_orders_per_s": 20.3,
+    "checkout_latency_ms": {
+     "p50": 36.0,
+     "p95": 63.5,
+     "p99": 134.2
+    },
+    "queue_wait_s": {
+     "p50": 17.21,
+     "p95": 32.7
+    },
+    "peak_concurrent_checkouts": 10,
+    "mean_concurrent_checkouts": 1.5,
+    "occ_retries": 732,
+    "trajectory": [
+     {
+      "t": 0.9,
+      "inflight": 0
+     },
+     {
+      "t": 1.9,
+      "inflight": 0
+     },
+     {
+      "t": 2.9,
+      "inflight": 0
+     },
+     {
+      "t": 3.9,
+      "inflight": 0
+     },
+     {
+      "t": 5.0,
+      "inflight": 0
+     },
+     {
+      "t": 6.0,
+      "inflight": 0
+     },
+     {
+      "t": 7.0,
+      "inflight": 0
+     },
+     {
+      "t": 8.0,
+      "inflight": 0
+     },
+     {
+      "t": 9.0,
+      "inflight": 0
+     },
+     {
+      "t": 10.0,
+      "inflight": 0
+     },
+     {
+      "t": 11.0,
+      "inflight": 0
+     },
+     {
+      "t": 12.0,
+      "inflight": 0
+     },
+     {
+      "t": 13.0,
+      "inflight": 0
+     },
+     {
+      "t": 14.0,
+      "inflight": 0
+     },
+     {
+      "t": 15.0,
+      "inflight": 0
+     },
+     {
+      "t": 16.0,
+      "inflight": 0
+     },
+     {
+      "t": 17.1,
+      "inflight": 0
+     },
+     {
+      "t": 18.1,
+      "inflight": 0
+     },
+     {
+      "t": 19.1,
+      "inflight": 0
+     },
+     {
+      "t": 20.1,
+      "inflight": 0
+     },
+     {
+      "t": 21.1,
+      "inflight": 0
+     },
+     {
+      "t": 22.1,
+      "inflight": 0
+     },
+     {
+      "t": 23.1,
+      "inflight": 0
+     },
+     {
+      "t": 24.1,
+      "inflight": 0
+     },
+     {
+      "t": 25.1,
+      "inflight": 0
+     },
+     {
+      "t": 26.1,
+      "inflight": 0
+     },
+     {
+      "t": 27.1,
+      "inflight": 0
+     },
+     {
+      "t": 28.1,
+      "inflight": 0
+     },
+     {
+      "t": 29.2,
+      "inflight": 0
+     },
+     {
+      "t": 30.2,
+      "inflight": 0
+     },
+     {
+      "t": 31.2,
+      "inflight": 0
+     },
+     {
+      "t": 32.2,
+      "inflight": 0
+     },
+     {
+      "t": 33.2,
+      "inflight": 0
+     },
+     {
+      "t": 34.2,
+      "inflight": 10
+     }
+    ],
+    "server_checkout_latency_ms": {
+     "p50": 20.5,
+     "p95": 47.1,
+     "p99": 50.0,
+     "count": 1422
+    },
+    "db_orders_created": 600,
+    "db_reserved_stock": 600,
+    "invariant_ok": true,
+    "rep": 0
+   },
+   {
+    "arm": "static:10",
+    "strategy": "optimistic",
+    "buyers": 690,
+    "stock": 600,
+    "confirmed": 600,
+    "units_sold_pct": 100.0,
+    "outcomes": {
+     "confirmed": 600,
+     "sold_out": 90
+    },
+    "time_to_sell_out_s": 30.35,
+    "throughput_orders_per_s": 20.3,
+    "checkout_latency_ms": {
+     "p50": 36.9,
+     "p95": 62.3,
+     "p99": 80.8
+    },
+    "queue_wait_s": {
+     "p50": 17.69,
+     "p95": 33.19
+    },
+    "peak_concurrent_checkouts": 10,
+    "mean_concurrent_checkouts": 1.4,
+    "occ_retries": 721,
+    "trajectory": [
+     {
+      "t": 0.9,
+      "inflight": 0
+     },
+     {
+      "t": 1.9,
+      "inflight": 0
+     },
+     {
+      "t": 2.9,
+      "inflight": 0
+     },
+     {
+      "t": 4.0,
+      "inflight": 0
+     },
+     {
+      "t": 5.0,
+      "inflight": 0
+     },
+     {
+      "t": 6.0,
+      "inflight": 0
+     },
+     {
+      "t": 7.0,
+      "inflight": 0
+     },
+     {
+      "t": 8.0,
+      "inflight": 0
+     },
+     {
+      "t": 9.0,
+      "inflight": 0
+     },
+     {
+      "t": 10.0,
+      "inflight": 0
+     },
+     {
+      "t": 11.0,
+      "inflight": 0
+     },
+     {
+      "t": 12.0,
+      "inflight": 0
+     },
+     {
+      "t": 13.0,
+      "inflight": 0
+     },
+     {
+      "t": 14.0,
+      "inflight": 0
+     },
+     {
+      "t": 15.0,
+      "inflight": 0
+     },
+     {
+      "t": 16.1,
+      "inflight": 0
+     },
+     {
+      "t": 17.1,
+      "inflight": 0
+     },
+     {
+      "t": 18.1,
+      "inflight": 0
+     },
+     {
+      "t": 19.1,
+      "inflight": 0
+     },
+     {
+      "t": 20.1,
+      "inflight": 0
+     },
+     {
+      "t": 21.1,
+      "inflight": 0
+     },
+     {
+      "t": 22.1,
+      "inflight": 0
+     },
+     {
+      "t": 23.1,
+      "inflight": 0
+     },
+     {
+      "t": 24.1,
+      "inflight": 0
+     },
+     {
+      "t": 25.1,
+      "inflight": 0
+     },
+     {
+      "t": 26.2,
+      "inflight": 0
+     },
+     {
+      "t": 27.2,
+      "inflight": 0
+     },
+     {
+      "t": 28.2,
+      "inflight": 0
+     },
+     {
+      "t": 29.2,
+      "inflight": 0
+     },
+     {
+      "t": 30.2,
+      "inflight": 0
+     },
+     {
+      "t": 31.2,
+      "inflight": 0
+     },
+     {
+      "t": 32.2,
+      "inflight": 10
+     },
+     {
+      "t": 33.2,
+      "inflight": 0
+     },
+     {
+      "t": 34.2,
+      "inflight": 0
+     }
+    ],
+    "server_checkout_latency_ms": {
+     "p50": 21.4,
+     "p95": 47.2,
+     "p99": 49.8,
+     "count": 1411
+    },
+    "db_orders_created": 600,
+    "db_reserved_stock": 600,
+    "invariant_ok": true,
+    "rep": 1
+   },
+   {
+    "arm": "static:10",
+    "strategy": "optimistic",
+    "buyers": 690,
+    "stock": 600,
+    "confirmed": 600,
+    "units_sold_pct": 100.0,
+    "outcomes": {
+     "confirmed": 600,
+     "sold_out": 90
+    },
+    "time_to_sell_out_s": 30.32,
+    "throughput_orders_per_s": 20.3,
+    "checkout_latency_ms": {
+     "p50": 36.9,
+     "p95": 58.4,
+     "p99": 72.4
+    },
+    "queue_wait_s": {
+     "p50": 17.64,
+     "p95": 33.16
+    },
+    "peak_concurrent_checkouts": 10,
+    "mean_concurrent_checkouts": 1.6,
+    "occ_retries": 736,
+    "trajectory": [
+     {
+      "t": 0.9,
+      "inflight": 0
+     },
+     {
+      "t": 1.9,
+      "inflight": 0
+     },
+     {
+      "t": 3.0,
+      "inflight": 0
+     },
+     {
+      "t": 4.0,
+      "inflight": 0
+     },
+     {
+      "t": 5.0,
+      "inflight": 0
+     },
+     {
+      "t": 6.0,
+      "inflight": 0
+     },
+     {
+      "t": 7.0,
+      "inflight": 0
+     },
+     {
+      "t": 8.0,
+      "inflight": 0
+     },
+     {
+      "t": 9.0,
+      "inflight": 0
+     },
+     {
+      "t": 10.0,
+      "inflight": 0
+     },
+     {
+      "t": 11.0,
+      "inflight": 0
+     },
+     {
+      "t": 12.0,
+      "inflight": 0
+     },
+     {
+      "t": 13.0,
+      "inflight": 0
+     },
+     {
+      "t": 14.0,
+      "inflight": 0
+     },
+     {
+      "t": 15.1,
+      "inflight": 0
+     },
+     {
+      "t": 16.1,
+      "inflight": 0
+     },
+     {
+      "t": 17.1,
+      "inflight": 0
+     },
+     {
+      "t": 18.1,
+      "inflight": 0
+     },
+     {
+      "t": 19.1,
+      "inflight": 0
+     },
+     {
+      "t": 20.1,
+      "inflight": 0
+     },
+     {
+      "t": 21.1,
+      "inflight": 0
+     },
+     {
+      "t": 22.1,
+      "inflight": 0
+     },
+     {
+      "t": 23.1,
+      "inflight": 0
+     },
+     {
+      "t": 24.1,
+      "inflight": 0
+     },
+     {
+      "t": 25.1,
+      "inflight": 0
+     },
+     {
+      "t": 26.2,
+      "inflight": 0
+     },
+     {
+      "t": 27.2,
+      "inflight": 0
+     },
+     {
+      "t": 28.2,
+      "inflight": 0
+     },
+     {
+      "t": 29.2,
+      "inflight": 10
+     },
+     {
+      "t": 30.2,
+      "inflight": 0
+     },
+     {
+      "t": 31.2,
+      "inflight": 10
+     },
+     {
+      "t": 32.2,
+      "inflight": 9
+     },
+     {
+      "t": 33.2,
+      "inflight": 10
+     },
+     {
+      "t": 34.2,
+      "inflight": 0
+     }
+    ],
+    "server_checkout_latency_ms": {
+     "p50": 20.9,
+     "p95": 46.8,
+     "p99": 49.5,
+     "count": 1426
+    },
+    "db_orders_created": 600,
+    "db_reserved_stock": 600,
+    "invariant_ok": true,
+    "rep": 2
+   }
+  ],
+  "static:20": [
+   {
+    "arm": "static:20",
+    "strategy": "optimistic",
+    "buyers": 690,
+    "stock": 600,
+    "confirmed": 600,
+    "units_sold_pct": 100.0,
+    "outcomes": {
+     "confirmed": 600,
+     "sold_out": 90
+    },
+    "time_to_sell_out_s": 15.93,
+    "throughput_orders_per_s": 40.9,
+    "checkout_latency_ms": {
+     "p50": 67.9,
+     "p95": 129.6,
+     "p99": 176.1
+    },
+    "queue_wait_s": {
+     "p50": 9.61,
+     "p95": 17.11
+    },
+    "peak_concurrent_checkouts": 20,
+    "mean_concurrent_checkouts": 5.8,
+    "occ_retries": 832,
+    "trajectory": [
+     {
+      "t": 0.9,
+      "inflight": 0
+     },
+     {
+      "t": 1.9,
+      "inflight": 0
+     },
+     {
+      "t": 3.0,
+      "inflight": 0
+     },
+     {
+      "t": 4.0,
+      "inflight": 0
+     },
+     {
+      "t": 5.0,
+      "inflight": 0
+     },
+     {
+      "t": 6.0,
+      "inflight": 0
+     },
+     {
+      "t": 7.0,
+      "inflight": 0
+     },
+     {
+      "t": 8.0,
+      "inflight": 0
+     },
+     {
+      "t": 9.0,
+      "inflight": 0
+     },
+     {
+      "t": 10.0,
+      "inflight": 0
+     },
+     {
+      "t": 11.0,
+      "inflight": 0
+     },
+     {
+      "t": 12.1,
+      "inflight": 0
+     },
+     {
+      "t": 13.1,
+      "inflight": 0
+     },
+     {
+      "t": 14.1,
+      "inflight": 0
+     },
+     {
+      "t": 15.1,
+      "inflight": 0
+     },
+     {
+      "t": 16.1,
+      "inflight": 20
+     },
+     {
+      "t": 17.2,
+      "inflight": 20
+     }
+    ],
+    "server_checkout_latency_ms": {
+     "p50": 36.8,
+     "p95": 89.8,
+     "p99": 98.7,
+     "count": 1522
+    },
+    "db_orders_created": 600,
+    "db_reserved_stock": 600,
+    "invariant_ok": true,
+    "rep": 0
+   },
+   {
+    "arm": "static:20",
+    "strategy": "optimistic",
+    "buyers": 690,
+    "stock": 600,
+    "confirmed": 600,
+    "units_sold_pct": 100.0,
+    "outcomes": {
+     "confirmed": 600,
+     "sold_out": 90
+    },
+    "time_to_sell_out_s": 14.85,
+    "throughput_orders_per_s": 41.4,
+    "checkout_latency_ms": {
+     "p50": 72.3,
+     "p95": 146.0,
+     "p99": 280.7
+    },
+    "queue_wait_s": {
+     "p50": 8.61,
+     "p95": 16.08
+    },
+    "peak_concurrent_checkouts": 29,
+    "mean_concurrent_checkouts": 7.2,
+    "occ_retries": 842,
+    "trajectory": [
+     {
+      "t": 0.9,
+      "inflight": 11
+     },
+     {
+      "t": 1.9,
+      "inflight": 0
+     },
+     {
+      "t": 3.0,
+      "inflight": 0
+     },
+     {
+      "t": 4.0,
+      "inflight": 2
+     },
+     {
+      "t": 5.0,
+      "inflight": 0
+     },
+     {
+      "t": 6.0,
+      "inflight": 0
+     },
+     {
+      "t": 7.0,
+      "inflight": 0
+     },
+     {
+      "t": 8.0,
+      "inflight": 0
+     },
+     {
+      "t": 9.0,
+      "inflight": 0
+     },
+     {
+      "t": 10.0,
+      "inflight": 0
+     },
+     {
+      "t": 11.0,
+      "inflight": 0
+     },
+     {
+      "t": 12.1,
+      "inflight": 0
+     },
+     {
+      "t": 13.1,
+      "inflight": 0
+     },
+     {
+      "t": 14.1,
+      "inflight": 0
+     },
+     {
+      "t": 15.1,
+      "inflight": 0
+     },
+     {
+      "t": 16.1,
+      "inflight": 0
+     },
+     {
+      "t": 17.1,
+      "inflight": 0
+     }
+    ],
+    "server_checkout_latency_ms": {
+     "p50": 38.5,
+     "p95": 94.4,
+     "p99": 173.4,
+     "count": 1532
+    },
+    "db_orders_created": 600,
+    "db_reserved_stock": 600,
+    "invariant_ok": true,
+    "rep": 1
+   },
+   {
+    "arm": "static:20",
+    "strategy": "optimistic",
+    "buyers": 690,
+    "stock": 600,
+    "confirmed": 600,
+    "units_sold_pct": 100.0,
+    "outcomes": {
+     "confirmed": 600,
+     "sold_out": 90
+    },
+    "time_to_sell_out_s": 15.05,
+    "throughput_orders_per_s": 41.1,
+    "checkout_latency_ms": {
+     "p50": 64.7,
+     "p95": 134.8,
+     "p99": 224.7
+    },
+    "queue_wait_s": {
+     "p50": 8.75,
+     "p95": 16.27
+    },
+    "peak_concurrent_checkouts": 20,
+    "mean_concurrent_checkouts": 6.7,
+    "occ_retries": 824,
+    "trajectory": [
+     {
+      "t": 0.9,
+      "inflight": 12
+     },
+     {
+      "t": 1.9,
+      "inflight": 14
+     },
+     {
+      "t": 3.0,
+      "inflight": 9
+     },
+     {
+      "t": 4.0,
+      "inflight": 6
+     },
+     {
+      "t": 5.0,
+      "inflight": 8
+     },
+     {
+      "t": 6.0,
+      "inflight": 4
+     },
+     {
+      "t": 7.0,
+      "inflight": 4
+     },
+     {
+      "t": 8.0,
+      "inflight": 5
+     },
+     {
+      "t": 9.2,
+      "inflight": 3
+     },
+     {
+      "t": 10.2,
+      "inflight": 0
+     },
+     {
+      "t": 11.2,
+      "inflight": 0
+     },
+     {
+      "t": 12.2,
+      "inflight": 0
+     },
+     {
+      "t": 13.2,
+      "inflight": 0
+     },
+     {
+      "t": 14.2,
+      "inflight": 0
+     },
+     {
+      "t": 15.2,
+      "inflight": 0
+     },
+     {
+      "t": 16.2,
+      "inflight": 0
+     },
+     {
+      "t": 17.2,
+      "inflight": 0
+     }
+    ],
+    "server_checkout_latency_ms": {
+     "p50": 37.9,
+     "p95": 92.3,
+     "p99": 123.8,
+     "count": 1514
+    },
+    "db_orders_created": 600,
+    "db_reserved_stock": 600,
+    "invariant_ok": true,
+    "rep": 2
+   }
+  ],
+  "static:40": [
+   {
+    "arm": "static:40",
+    "strategy": "optimistic",
+    "buyers": 690,
+    "stock": 600,
+    "confirmed": 600,
+    "units_sold_pct": 100.0,
+    "outcomes": {
+     "confirmed": 600,
+     "sold_out": 90
+    },
+    "time_to_sell_out_s": 7.91,
+    "throughput_orders_per_s": 81.1,
+    "checkout_latency_ms": {
+     "p50": 445.6,
+     "p95": 1264.7,
+     "p99": 2221.0
+    },
+    "queue_wait_s": {
+     "p50": 4.14,
+     "p95": 8.08
+    },
+    "peak_concurrent_checkouts": 118,
+    "mean_concurrent_checkouts": 65.4,
+    "occ_retries": 359,
+    "trajectory": [
+     {
+      "t": 0.9,
+      "inflight": 76
+     },
+     {
+      "t": 2.2,
+      "inflight": 118
+     },
+     {
+      "t": 3.4,
+      "inflight": 80
+     },
+     {
+      "t": 4.6,
+      "inflight": 51
+     },
+     {
+      "t": 5.8,
+      "inflight": 71
+     },
+     {
+      "t": 7.0,
+      "inflight": 54
+     },
+     {
+      "t": 8.2,
+      "inflight": 48
+     }
+    ],
+    "server_checkout_latency_ms": {
+     "p50": 12.7,
+     "p95": 224.6,
+     "p99": 390.7,
+     "count": 1049
+    },
+    "db_orders_created": 600,
+    "db_reserved_stock": 600,
+    "invariant_ok": true,
+    "rep": 0
+   },
+   {
+    "arm": "static:40",
+    "strategy": "optimistic",
+    "buyers": 690,
+    "stock": 600,
+    "confirmed": 600,
+    "units_sold_pct": 100.0,
+    "outcomes": {
+     "confirmed": 600,
+     "sold_out": 87,
+     "client_error": 3
+    },
+    "time_to_sell_out_s": 8.26,
+    "throughput_orders_per_s": 77.5,
+    "checkout_latency_ms": {
+     "p50": 473.7,
+     "p95": 1405.2,
+     "p99": 2195.5
+    },
+    "queue_wait_s": {
+     "p50": 4.15,
+     "p95": 8.13
+    },
+    "peak_concurrent_checkouts": 120,
+    "mean_concurrent_checkouts": 68.0,
+    "occ_retries": 398,
+    "trajectory": [
+     {
+      "t": 0.9,
+      "inflight": 76
+     },
+     {
+      "t": 2.1,
+      "inflight": 77
+     },
+     {
+      "t": 3.4,
+      "inflight": 91
+     },
+     {
+      "t": 4.6,
+      "inflight": 59
+     },
+     {
+      "t": 5.8,
+      "inflight": 66
+     },
+     {
+      "t": 6.9,
+      "inflight": 65
+     },
+     {
+      "t": 8.1,
+      "inflight": 48
+     }
+    ],
+    "server_checkout_latency_ms": {
+     "p50": 14.9,
+     "p95": 236.2,
+     "p99": 428.6,
+     "count": 1085
+    },
+    "db_orders_created": 600,
+    "db_reserved_stock": 600,
+    "invariant_ok": true,
+    "rep": 1
+   },
+   {
+    "arm": "static:40",
+    "strategy": "optimistic",
+    "buyers": 690,
+    "stock": 600,
+    "confirmed": 600,
+    "units_sold_pct": 100.0,
+    "outcomes": {
+     "confirmed": 600,
+     "sold_out": 89,
+     "client_error": 1
+    },
+    "time_to_sell_out_s": 12.68,
+    "throughput_orders_per_s": 49.8,
+    "checkout_latency_ms": {
+     "p50": 989.5,
+     "p95": 4243.7,
+     "p99": 5242.7
+    },
+    "queue_wait_s": {
+     "p50": 4.28,
+     "p95": 8.32
+    },
+    "peak_concurrent_checkouts": 226,
+    "mean_concurrent_checkouts": 110.9,
+    "occ_retries": 530,
+    "trajectory": [
+     {
+      "t": 0.9,
+      "inflight": 76
+     },
+     {
+      "t": 2.0,
+      "inflight": 89
+     },
+     {
+      "t": 3.4,
+      "inflight": 126
+     },
+     {
+      "t": 4.8,
+      "inflight": 96
+     },
+     {
+      "t": 6.2,
+      "inflight": 114
+     },
+     {
+      "t": 7.5,
+      "inflight": 162
+     },
+     {
+      "t": 8.6,
+      "inflight": 186
+     },
+     {
+      "t": 11.0,
+      "inflight": 141
+     },
+     {
+      "t": 12.9,
+      "inflight": 77
+     }
+    ],
+    "server_checkout_latency_ms": {
+     "p50": 23.5,
+     "p95": 476.5,
+     "p99": 851.3,
+     "count": 1219
+    },
+    "db_orders_created": 600,
+    "db_reserved_stock": 600,
+    "invariant_ok": true,
+    "rep": 2
+   }
+  ],
+  "static:80": [
+   {
+    "arm": "static:80",
+    "strategy": "optimistic",
+    "buyers": 690,
+    "stock": 600,
+    "confirmed": 600,
+    "units_sold_pct": 100.0,
+    "outcomes": {
+     "confirmed": 600,
+     "expired": 59,
+     "sold_out": 29,
+     "client_error": 2
+    },
+    "time_to_sell_out_s": 32.16,
+    "throughput_orders_per_s": 19.2,
+    "checkout_latency_ms": {
+     "p50": 3932.0,
+     "p95": 9530.6,
+     "p99": 11913.3
+    },
+    "queue_wait_s": {
+     "p50": 2.65,
+     "p95": 4.52
+    },
+    "peak_concurrent_checkouts": 625,
+    "mean_concurrent_checkouts": 304.0,
+    "occ_retries": 1495,
+    "trajectory": [
+     {
+      "t": 0.9,
+      "inflight": 159
+     },
+     {
+      "t": 3.6,
+      "inflight": 437
+     },
+     {
+      "t": 6.1,
+      "inflight": 567
+     },
+     {
+      "t": 7.4,
+      "inflight": 465
+     },
+     {
+      "t": 8.5,
+      "inflight": 459
+     },
+     {
+      "t": 15.5,
+      "inflight": 396
+     },
+     {
+      "t": 16.8,
+      "inflight": 363
+     },
+     {
+      "t": 23.2,
+      "inflight": 333
+     },
+     {
+      "t": 26.5,
+      "inflight": 160
+     },
+     {
+      "t": 30.0,
+      "inflight": 159
+     },
+     {
+      "t": 31.4,
+      "inflight": 103
+     },
+     {
+      "t": 32.9,
+      "inflight": 7
+     }
+    ],
+    "server_checkout_latency_ms": {
+     "p50": 729.1,
+     "p95": 2296.6,
+     "p99": 2459.3,
+     "count": 2124
+    },
+    "db_orders_created": 600,
+    "db_reserved_stock": 600,
+    "invariant_ok": true,
+    "rep": 0
+   },
+   {
+    "arm": "static:80",
+    "strategy": "optimistic",
+    "buyers": 690,
+    "stock": 600,
+    "confirmed": 423,
+    "units_sold_pct": 70.5,
+    "outcomes": {
+     "confirmed": 423,
+     "expired": 258,
+     "client_error": 9
+    },
+    "time_to_sell_out_s": 34.9,
+    "throughput_orders_per_s": 12.5,
+    "checkout_latency_ms": {
+     "p50": 4277.7,
+     "p95": 10626.9,
+     "p99": 13200.3
+    },
+    "queue_wait_s": {
+     "p50": 2.77,
+     "p95": 5.52
+    },
+    "peak_concurrent_checkouts": 614,
+    "mean_concurrent_checkouts": 325.5,
+    "occ_retries": 1728,
+    "trajectory": [
+     {
+      "t": 0.9,
+      "inflight": 80
+     },
+     {
+      "t": 2.0,
+      "inflight": 231
+     },
+     {
+      "t": 5.9,
+      "inflight": 614
+     },
+     {
+      "t": 7.8,
+      "inflight": 523
+     },
+     {
+      "t": 9.0,
+      "inflight": 504
+     },
+     {
+      "t": 16.0,
+      "inflight": 276
+     },
+     {
+      "t": 17.1,
+      "inflight": 414
+     },
+     {
+      "t": 23.9,
+      "inflight": 376
+     },
+     {
+      "t": 26.6,
+      "inflight": 258
+     },
+     {
+      "t": 31.5,
+      "inflight": 277
+     },
+     {
+      "t": 35.9,
+      "inflight": 216
+     }
+    ],
+    "server_checkout_latency_ms": {
+     "p50": 875.6,
+     "p95": 2315.2,
+     "p99": 2463.0,
+     "count": 2151
+    },
+    "db_orders_created": 423,
+    "db_reserved_stock": 423,
+    "invariant_ok": true,
+    "rep": 1
+   },
+   {
+    "arm": "static:80",
+    "strategy": "optimistic",
+    "buyers": 690,
+    "stock": 600,
+    "confirmed": 600,
+    "units_sold_pct": 100.0,
+    "outcomes": {
+     "confirmed": 600,
+     "sold_out": 90
+    },
+    "time_to_sell_out_s": 14.32,
+    "throughput_orders_per_s": 44.0,
+    "checkout_latency_ms": {
+     "p50": 1828.0,
+     "p95": 5933.1,
+     "p99": 7210.2
+    },
+    "queue_wait_s": {
+     "p50": 2.2,
+     "p95": 4.23
+    },
+    "peak_concurrent_checkouts": 448,
+    "mean_concurrent_checkouts": 219.1,
+    "occ_retries": 655,
+    "trajectory": [
+     {
+      "t": 1.0,
+      "inflight": 151
+     },
+     {
+      "t": 2.4,
+      "inflight": 311
+     },
+     {
+      "t": 3.9,
+      "inflight": 431
+     },
+     {
+      "t": 5.3,
+      "inflight": 358
+     },
+     {
+      "t": 6.6,
+      "inflight": 251
+     },
+     {
+      "t": 7.6,
+      "inflight": 242
+     },
+     {
+      "t": 11.5,
+      "inflight": 186
+     },
+     {
+      "t": 13.4,
+      "inflight": 116
+     },
+     {
+      "t": 14.6,
+      "inflight": 47
+     }
+    ],
+    "server_checkout_latency_ms": {
+     "p50": 26.2,
+     "p95": 865.5,
+     "p99": 973.1,
+     "count": 1345
+    },
+    "db_orders_created": 600,
+    "db_reserved_stock": 600,
+    "invariant_ok": true,
+    "rep": 2
+   }
+  ],
+  "static:160": [
+   {
+    "arm": "static:160",
+    "strategy": "optimistic",
+    "buyers": 690,
+    "stock": 600,
+    "confirmed": 257,
+    "units_sold_pct": 42.8,
+    "outcomes": {
+     "confirmed": 257,
+     "expired": 423,
+     "client_error": 10
+    },
+    "time_to_sell_out_s": 32.6,
+    "throughput_orders_per_s": 8.2,
+    "checkout_latency_ms": {
+     "p50": 5647.1,
+     "p95": 12332.3,
+     "p99": 14449.2
+    },
+    "queue_wait_s": {
+     "p50": 1.65,
+     "p95": 5.44
+    },
+    "peak_concurrent_checkouts": 660,
+    "mean_concurrent_checkouts": 386.8,
+    "occ_retries": 1857,
+    "trajectory": [
+     {
+      "t": 1.1,
+      "inflight": 160
+     },
+     {
+      "t": 4.0,
+      "inflight": 568
+     },
+     {
+      "t": 8.5,
+      "inflight": 619
+     },
+     {
+      "t": 9.8,
+      "inflight": 590
+     },
+     {
+      "t": 17.3,
+      "inflight": 543
+     },
+     {
+      "t": 19.8,
+      "inflight": 455
+     },
+     {
+      "t": 25.6,
+      "inflight": 472
+     },
+     {
+      "t": 32.7,
+      "inflight": 320
+     },
+     {
+      "t": 34.1,
+      "inflight": 183
+     },
+     {
+      "t": 35.3,
+      "inflight": 33
+     }
+    ],
+    "server_checkout_latency_ms": {
+     "p50": 1445.8,
+     "p95": 2394.6,
+     "p99": 2478.9,
+     "count": 2114
+    },
+    "db_orders_created": 257,
+    "db_reserved_stock": 257,
+    "invariant_ok": true,
+    "rep": 0
+   },
+   {
+    "arm": "static:160",
+    "strategy": "optimistic",
+    "buyers": 690,
+    "stock": 600,
+    "confirmed": 249,
+    "units_sold_pct": 41.5,
+    "outcomes": {
+     "confirmed": 249,
+     "expired": 428,
+     "client_error": 13
+    },
+    "time_to_sell_out_s": 33.98,
+    "throughput_orders_per_s": 7.6,
+    "checkout_latency_ms": {
+     "p50": 5497.6,
+     "p95": 13628.6,
+     "p99": 14446.7
+    },
+    "queue_wait_s": {
+     "p50": 1.71,
+     "p95": 8.07
+    },
+    "peak_concurrent_checkouts": 638,
+    "mean_concurrent_checkouts": 382.9,
+    "occ_retries": 2033,
+    "trajectory": [
+     {
+      "t": 0.9,
+      "inflight": 160
+     },
+     {
+      "t": 2.2,
+      "inflight": 467
+     },
+     {
+      "t": 9.6,
+      "inflight": 638
+     },
+     {
+      "t": 17.3,
+      "inflight": 364
+     },
+     {
+      "t": 18.3,
+      "inflight": 562
+     },
+     {
+      "t": 25.7,
+      "inflight": 257
+     },
+     {
+      "t": 26.9,
+      "inflight": 498
+     },
+     {
+      "t": 34.1,
+      "inflight": 427
+     },
+     {
+      "t": 37.0,
+      "inflight": 165
+     },
+     {
+      "t": 39.3,
+      "inflight": 60
+     }
+    ],
+    "server_checkout_latency_ms": {
+     "p50": 1560.1,
+     "p95": 2406.0,
+     "p99": 2481.2,
+     "count": 2282
+    },
+    "db_orders_created": 249,
+    "db_reserved_stock": 249,
+    "invariant_ok": true,
+    "rep": 1
+   },
+   {
+    "arm": "static:160",
+    "strategy": "optimistic",
+    "buyers": 690,
+    "stock": 600,
+    "confirmed": 253,
+    "units_sold_pct": 42.2,
+    "outcomes": {
+     "confirmed": 253,
+     "expired": 430,
+     "client_error": 7
+    },
+    "time_to_sell_out_s": 33.16,
+    "throughput_orders_per_s": 8.0,
+    "checkout_latency_ms": {
+     "p50": 5768.1,
+     "p95": 14047.7,
+     "p99": 18419.9
+    },
+    "queue_wait_s": {
+     "p50": 1.68,
+     "p95": 8.6
+    },
+    "peak_concurrent_checkouts": 638,
+    "mean_concurrent_checkouts": 368.6,
+    "occ_retries": 1800,
+    "trajectory": [
+     {
+      "t": 1.0,
+      "inflight": 160
+     },
+     {
+      "t": 2.1,
+      "inflight": 478
+     },
+     {
+      "t": 10.4,
+      "inflight": 594
+     },
+     {
+      "t": 16.6,
+      "inflight": 573
+     },
+     {
+      "t": 19.5,
+      "inflight": 425
+     },
+     {
+      "t": 25.1,
+      "inflight": 499
+     },
+     {
+      "t": 32.3,
+      "inflight": 434
+     },
+     {
+      "t": 34.8,
+      "inflight": 189
+     },
+     {
+      "t": 37.0,
+      "inflight": 131
+     }
+    ],
+    "server_checkout_latency_ms": {
+     "p50": 1321.0,
+     "p95": 2382.1,
+     "p99": 2476.4,
+     "count": 2053
+    },
+    "db_orders_created": 253,
+    "db_reserved_stock": 253,
+    "invariant_ok": true,
+    "rep": 2
+   }
+  ],
+  "aimd": [
+   {
+    "arm": "aimd",
+    "strategy": "optimistic",
+    "buyers": 690,
+    "stock": 600,
+    "confirmed": 600,
+    "units_sold_pct": 100.0,
+    "outcomes": {
+     "confirmed": 600,
+     "sold_out": 90
+    },
+    "time_to_sell_out_s": 33.65,
+    "throughput_orders_per_s": 18.4,
+    "checkout_latency_ms": {
+     "p50": 14.5,
+     "p95": 23.2,
+     "p99": 37.0
+    },
+    "queue_wait_s": {
+     "p50": 19.76,
+     "p95": 35.54
+    },
+    "peak_concurrent_checkouts": 7,
+    "mean_concurrent_checkouts": 0.4,
+    "occ_retries": 305,
+    "trajectory": [
+     {
+      "t": 1.0,
+      "inflight": 0,
+      "cwnd": 2.0,
+      "phase": "slow_start",
+      "signal": "init",
+      "q_ms": null,
+      "tput": 0.0
+     },
+     {
+      "t": 2.0,
+      "inflight": 0,
+      "cwnd": 4.0,
+      "phase": "slow_start",
+      "signal": "slow_start",
+      "q_ms": null,
+      "tput": 0.0
+     },
+     {
+      "t": 3.0,
+      "inflight": 0,
+      "cwnd": 2.0,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 21.627416997969522,
+      "tput": 36.0
+     },
+     {
+      "t": 4.0,
+      "inflight": 1,
+      "cwnd": 1.0,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 10.313708498984761,
+      "tput": 16.0
+     },
+     {
+      "t": 5.0,
+      "inflight": 2,
+      "cwnd": 2.0,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 5.0
+     },
+     {
+      "t": 6.0,
+      "inflight": 3,
+      "cwnd": 3.0,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 17.5
+     },
+     {
+      "t": 7.1,
+      "inflight": 0,
+      "cwnd": 1.5,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 15.0,
+      "tput": 34.0
+     },
+     {
+      "t": 8.2,
+      "inflight": 0,
+      "cwnd": 2.5,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 6.0
+     },
+     {
+      "t": 9.2,
+      "inflight": 1,
+      "cwnd": 3.5,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 15.5
+     },
+     {
+      "t": 10.2,
+      "inflight": 0,
+      "cwnd": 1.8,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 12.454342644059432,
+      "tput": 34.0
+     },
+     {
+      "t": 11.2,
+      "inflight": 0,
+      "cwnd": 2.8,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 7.0
+     },
+     {
+      "t": 12.2,
+      "inflight": 0,
+      "cwnd": 3.8,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 12.454342644059432,
+      "tput": 20.0
+     },
+     {
+      "t": 13.2,
+      "inflight": 0,
+      "cwnd": 1.9,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 15.0,
+      "tput": 37.5
+     },
+     {
+      "t": 14.2,
+      "inflight": 2,
+      "cwnd": 2.9,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 12.454342644059432,
+      "tput": 10.0
+     },
+     {
+      "t": 15.2,
+      "inflight": 0,
+      "cwnd": 1.4,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 12.454342644059432,
+      "tput": 15.5
+     },
+     {
+      "t": 16.3,
+      "inflight": 0,
+      "cwnd": 2.4,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": null,
+      "tput": 0.0
+     },
+     {
+      "t": 17.3,
+      "inflight": 0,
+      "cwnd": 1.2,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 12.454342644059432,
+      "tput": 16.5
+     },
+     {
+      "t": 18.3,
+      "inflight": 0,
+      "cwnd": 2.2,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 8.513656920021768,
+      "tput": 1.0
+     },
+     {
+      "t": 19.3,
+      "inflight": 0,
+      "cwnd": 1.1,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 10.313708498984761,
+      "tput": 17.0
+     },
+     {
+      "t": 20.3,
+      "inflight": 0,
+      "cwnd": 2.1,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 8.513656920021768,
+      "tput": 2.0
+     },
+     {
+      "t": 21.3,
+      "inflight": 0,
+      "cwnd": 1.1,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 10.313708498984761,
+      "tput": 17.5
+     },
+     {
+      "t": 22.3,
+      "inflight": 2,
+      "cwnd": 2.1,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 8.513656920021768,
+      "tput": 3.0
+     },
+     {
+      "t": 23.3,
+      "inflight": 0,
+      "cwnd": 1.0,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 12.454342644059432,
+      "tput": 16.5
+     },
+     {
+      "t": 24.4,
+      "inflight": 0,
+      "cwnd": 2.0,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 4.0
+     },
+     {
+      "t": 25.4,
+      "inflight": 0,
+      "cwnd": 3.0,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 12.454342644059432,
+      "tput": 18.5
+     },
+     {
+      "t": 26.4,
+      "inflight": 0,
+      "cwnd": 1.5,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 12.454342644059432,
+      "tput": 36.0
+     },
+     {
+      "t": 27.4,
+      "inflight": 2,
+      "cwnd": 2.5,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 5.0
+     },
+     {
+      "t": 28.4,
+      "inflight": 1,
+      "cwnd": 3.5,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 12.454342644059432,
+      "tput": 17.5
+     },
+     {
+      "t": 29.4,
+      "inflight": 0,
+      "cwnd": 1.8,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 12.454342644059432,
+      "tput": 34.0
+     },
+     {
+      "t": 30.4,
+      "inflight": 0,
+      "cwnd": 2.8,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 8.513656920021768,
+      "tput": 6.0
+     },
+     {
+      "t": 31.5,
+      "inflight": 1,
+      "cwnd": 3.8,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 18.0
+     },
+     {
+      "t": 32.5,
+      "inflight": 0,
+      "cwnd": 1.9,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 12.454342644059432,
+      "tput": 38.5
+     },
+     {
+      "t": 33.5,
+      "inflight": 0,
+      "cwnd": 2.9,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 8.513656920021768,
+      "tput": 7.0
+     },
+     {
+      "t": 34.5,
+      "inflight": 0,
+      "cwnd": 3.9,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 16.5
+     },
+     {
+      "t": 35.5,
+      "inflight": 0,
+      "cwnd": 4.9,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 12.454342644059432,
+      "tput": 26.5
+     },
+     {
+      "t": 36.5,
+      "inflight": 0,
+      "cwnd": 5.9,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 15.0,
+      "tput": 33.5
+     }
+    ],
+    "server_checkout_latency_ms": {
+     "p50": 8.1,
+     "p95": 21.2,
+     "p99": 24.2,
+     "count": 995
+    },
+    "db_orders_created": 600,
+    "db_reserved_stock": 600,
+    "invariant_ok": true,
+    "rep": 0
+   },
+   {
+    "arm": "aimd",
+    "strategy": "optimistic",
+    "buyers": 690,
+    "stock": 600,
+    "confirmed": 600,
+    "units_sold_pct": 100.0,
+    "outcomes": {
+     "confirmed": 600,
+     "sold_out": 90
+    },
+    "time_to_sell_out_s": 33.02,
+    "throughput_orders_per_s": 18.9,
+    "checkout_latency_ms": {
+     "p50": 13.2,
+     "p95": 21.8,
+     "p99": 26.6
+    },
+    "queue_wait_s": {
+     "p50": 19.05,
+     "p95": 35.86
+    },
+    "peak_concurrent_checkouts": 4,
+    "mean_concurrent_checkouts": 0.4,
+    "occ_retries": 305,
+    "trajectory": [
+     {
+      "t": 0.9,
+      "inflight": 0,
+      "cwnd": 2.0,
+      "phase": "slow_start",
+      "signal": "init",
+      "q_ms": null,
+      "tput": 0.0
+     },
+     {
+      "t": 2.0,
+      "inflight": 3,
+      "cwnd": 4.0,
+      "phase": "slow_start",
+      "signal": "slow_start",
+      "q_ms": null,
+      "tput": 0.0
+     },
+     {
+      "t": 3.0,
+      "inflight": 0,
+      "cwnd": 2.0,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 18.027313840043536,
+      "tput": 43.0
+     },
+     {
+      "t": 4.0,
+      "inflight": 0,
+      "cwnd": 1.0,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 10.313708498984761,
+      "tput": 15.0
+     },
+     {
+      "t": 5.0,
+      "inflight": 0,
+      "cwnd": 2.0,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 12.454342644059432,
+      "tput": 2.0
+     },
+     {
+      "t": 6.0,
+      "inflight": 0,
+      "cwnd": 1.0,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 12.454342644059432,
+      "tput": 17.5
+     },
+     {
+      "t": 7.0,
+      "inflight": 1,
+      "cwnd": 2.0,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 2.0
+     },
+     {
+      "t": 8.0,
+      "inflight": 0,
+      "cwnd": 1.0,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 10.313708498984761,
+      "tput": 17.5
+     },
+     {
+      "t": 9.1,
+      "inflight": 0,
+      "cwnd": 2.0,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 3.0
+     },
+     {
+      "t": 10.1,
+      "inflight": 1,
+      "cwnd": 1.0,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 10.313708498984761,
+      "tput": 18.0
+     },
+     {
+      "t": 11.1,
+      "inflight": 1,
+      "cwnd": 2.0,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 7.0,
+      "tput": 5.0
+     },
+     {
+      "t": 12.1,
+      "inflight": 1,
+      "cwnd": 3.0,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 17.5
+     },
+     {
+      "t": 13.1,
+      "inflight": 0,
+      "cwnd": 1.5,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 12.454342644059432,
+      "tput": 35.5
+     },
+     {
+      "t": 14.1,
+      "inflight": 0,
+      "cwnd": 2.5,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 8.513656920021768,
+      "tput": 8.0
+     },
+     {
+      "t": 15.1,
+      "inflight": 0,
+      "cwnd": 2.5,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 8.513656920021768,
+      "tput": 8.0
+     },
+     {
+      "t": 16.1,
+      "inflight": 0,
+      "cwnd": 3.5,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 20.5
+     },
+     {
+      "t": 17.2,
+      "inflight": 0,
+      "cwnd": 1.8,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 12.454342644059432,
+      "tput": 38.0
+     },
+     {
+      "t": 18.2,
+      "inflight": 0,
+      "cwnd": 2.8,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 8.513656920021768,
+      "tput": 9.0
+     },
+     {
+      "t": 19.2,
+      "inflight": 0,
+      "cwnd": 3.8,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 21.0
+     },
+     {
+      "t": 20.2,
+      "inflight": 1,
+      "cwnd": 1.9,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 12.454342644059432,
+      "tput": 40.0
+     },
+     {
+      "t": 21.2,
+      "inflight": 0,
+      "cwnd": 2.9,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 8.513656920021768,
+      "tput": 9.0
+     },
+     {
+      "t": 22.2,
+      "inflight": 0,
+      "cwnd": 1.4,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 10.313708498984761,
+      "tput": 15.5
+     },
+     {
+      "t": 23.2,
+      "inflight": 1,
+      "cwnd": 2.4,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 7.0,
+      "tput": 1.0
+     },
+     {
+      "t": 24.2,
+      "inflight": 0,
+      "cwnd": 1.2,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 10.313708498984761,
+      "tput": 17.0
+     },
+     {
+      "t": 25.3,
+      "inflight": 0,
+      "cwnd": 2.2,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 8.513656920021768,
+      "tput": 4.0
+     },
+     {
+      "t": 26.3,
+      "inflight": 0,
+      "cwnd": 3.2,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 18.5
+     },
+     {
+      "t": 27.3,
+      "inflight": 1,
+      "cwnd": 1.6,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 12.454342644059432,
+      "tput": 33.5
+     },
+     {
+      "t": 28.3,
+      "inflight": 0,
+      "cwnd": 2.6,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 8.513656920021768,
+      "tput": 4.0
+     },
+     {
+      "t": 29.3,
+      "inflight": 2,
+      "cwnd": 3.6,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 18.5
+     },
+     {
+      "t": 30.3,
+      "inflight": 0,
+      "cwnd": 1.8,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 12.454342644059432,
+      "tput": 35.5
+     },
+     {
+      "t": 31.3,
+      "inflight": 1,
+      "cwnd": 2.8,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 8.513656920021768,
+      "tput": 6.0
+     },
+     {
+      "t": 32.3,
+      "inflight": 0,
+      "cwnd": 3.8,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 18.0
+     },
+     {
+      "t": 33.3,
+      "inflight": 0,
+      "cwnd": 1.9,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 12.454342644059432,
+      "tput": 36.5
+     },
+     {
+      "t": 34.4,
+      "inflight": 0,
+      "cwnd": 2.9,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 7.0,
+      "tput": 7.0
+     },
+     {
+      "t": 35.4,
+      "inflight": 0,
+      "cwnd": 3.9,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 8.513656920021768,
+      "tput": 14.5
+     },
+     {
+      "t": 36.4,
+      "inflight": 0,
+      "cwnd": 4.9,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 12.454342644059432,
+      "tput": 24.0
+     }
+    ],
+    "server_checkout_latency_ms": {
+     "p50": 7.6,
+     "p95": 18.8,
+     "p99": 24.1,
+     "count": 995
+    },
+    "db_orders_created": 600,
+    "db_reserved_stock": 600,
+    "invariant_ok": true,
+    "rep": 1
+   },
+   {
+    "arm": "aimd",
+    "strategy": "optimistic",
+    "buyers": 690,
+    "stock": 600,
+    "confirmed": 600,
+    "units_sold_pct": 100.0,
+    "outcomes": {
+     "confirmed": 600,
+     "sold_out": 90
+    },
+    "time_to_sell_out_s": 32.54,
+    "throughput_orders_per_s": 18.6,
+    "checkout_latency_ms": {
+     "p50": 15.4,
+     "p95": 26.5,
+     "p99": 33.3
+    },
+    "queue_wait_s": {
+     "p50": 18.08,
+     "p95": 34.97
+    },
+    "peak_concurrent_checkouts": 5,
+    "mean_concurrent_checkouts": 0.6,
+    "occ_retries": 299,
+    "trajectory": [
+     {
+      "t": 0.9,
+      "inflight": 3,
+      "cwnd": 4.0,
+      "phase": "slow_start",
+      "signal": "slow_start",
+      "q_ms": null,
+      "tput": 0.0
+     },
+     {
+      "t": 2.0,
+      "inflight": 0,
+      "cwnd": 2.0,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 25.908685288118864,
+      "tput": 39.0
+     },
+     {
+      "t": 3.0,
+      "inflight": 1,
+      "cwnd": 3.0,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 12.454342644059432,
+      "tput": 21.0
+     },
+     {
+      "t": 4.0,
+      "inflight": 0,
+      "cwnd": 1.5,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 12.454342644059432,
+      "tput": 36.5
+     },
+     {
+      "t": 5.0,
+      "inflight": 0,
+      "cwnd": 2.5,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 8.0
+     },
+     {
+      "t": 6.0,
+      "inflight": 2,
+      "cwnd": 3.5,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 19.0
+     },
+     {
+      "t": 7.0,
+      "inflight": 1,
+      "cwnd": 1.8,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 15.0,
+      "tput": 40.5
+     },
+     {
+      "t": 8.0,
+      "inflight": 2,
+      "cwnd": 2.8,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 12.454342644059432,
+      "tput": 9.0
+     },
+     {
+      "t": 9.1,
+      "inflight": 0,
+      "cwnd": 3.8,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 15.0,
+      "tput": 19.5
+     },
+     {
+      "t": 10.1,
+      "inflight": 0,
+      "cwnd": 1.9,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 18.027313840043536,
+      "tput": 28.0
+     },
+     {
+      "t": 11.1,
+      "inflight": 0,
+      "cwnd": 2.9,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 8.513656920021768,
+      "tput": 1.0
+     },
+     {
+      "t": 12.1,
+      "inflight": 1,
+      "cwnd": 1.4,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 18.027313840043536,
+      "tput": 14.5
+     },
+     {
+      "t": 13.1,
+      "inflight": 2,
+      "cwnd": 2.4,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 1.0
+     },
+     {
+      "t": 14.1,
+      "inflight": 0,
+      "cwnd": 1.2,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 12.454342644059432,
+      "tput": 17.0
+     },
+     {
+      "t": 15.1,
+      "inflight": 0,
+      "cwnd": 2.2,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 8.513656920021768,
+      "tput": 3.0
+     },
+     {
+      "t": 16.1,
+      "inflight": 0,
+      "cwnd": 1.1,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 12.454342644059432,
+      "tput": 18.0
+     },
+     {
+      "t": 17.2,
+      "inflight": 0,
+      "cwnd": 2.1,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 5.0
+     },
+     {
+      "t": 18.2,
+      "inflight": 0,
+      "cwnd": 3.1,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 12.454342644059432,
+      "tput": 17.5
+     },
+     {
+      "t": 19.2,
+      "inflight": 0,
+      "cwnd": 1.6,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 15.0,
+      "tput": 35.0
+     },
+     {
+      "t": 20.2,
+      "inflight": 0,
+      "cwnd": 2.6,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 12.454342644059432,
+      "tput": 6.0
+     },
+     {
+      "t": 21.2,
+      "inflight": 3,
+      "cwnd": 3.6,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 12.454342644059432,
+      "tput": 18.0
+     },
+     {
+      "t": 22.2,
+      "inflight": 0,
+      "cwnd": 3.6,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 12.454342644059432,
+      "tput": 18.0
+     },
+     {
+      "t": 23.2,
+      "inflight": 0,
+      "cwnd": 1.8,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 18.027313840043536,
+      "tput": 37.0
+     },
+     {
+      "t": 24.3,
+      "inflight": 0,
+      "cwnd": 2.8,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 9.0
+     },
+     {
+      "t": 25.3,
+      "inflight": 0,
+      "cwnd": 3.8,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 12.454342644059432,
+      "tput": 19.5
+     },
+     {
+      "t": 26.3,
+      "inflight": 0,
+      "cwnd": 1.9,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 15.0,
+      "tput": 41.0
+     },
+     {
+      "t": 27.3,
+      "inflight": 2,
+      "cwnd": 2.9,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 12.454342644059432,
+      "tput": 9.0
+     },
+     {
+      "t": 28.3,
+      "inflight": 0,
+      "cwnd": 1.4,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 15.0,
+      "tput": 15.5
+     },
+     {
+      "t": 29.3,
+      "inflight": 0,
+      "cwnd": 2.4,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 8.513656920021768,
+      "tput": 1.0
+     },
+     {
+      "t": 30.3,
+      "inflight": 0,
+      "cwnd": 1.2,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 12.454342644059432,
+      "tput": 17.0
+     },
+     {
+      "t": 31.3,
+      "inflight": 0,
+      "cwnd": 2.2,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 8.513656920021768,
+      "tput": 2.0
+     },
+     {
+      "t": 32.4,
+      "inflight": 0,
+      "cwnd": 1.1,
+      "phase": "avoid",
+      "signal": "loss",
+      "q_ms": 12.454342644059432,
+      "tput": 16.0
+     },
+     {
+      "t": 33.4,
+      "inflight": 0,
+      "cwnd": 2.1,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 12.454342644059432,
+      "tput": 4.0
+     },
+     {
+      "t": 34.4,
+      "inflight": 3,
+      "cwnd": 3.1,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 10.313708498984761,
+      "tput": 13.0
+     },
+     {
+      "t": 35.4,
+      "inflight": 4,
+      "cwnd": 4.1,
+      "phase": "avoid",
+      "signal": "increase",
+      "q_ms": 15.0,
+      "tput": 19.0
+     }
+    ],
+    "server_checkout_latency_ms": {
+     "p50": 8.4,
+     "p95": 22.5,
+     "p99": 24.7,
+     "count": 989
+    },
+    "db_orders_created": 600,
+    "db_reserved_stock": 600,
+    "invariant_ok": true,
+    "rep": 2
+   }
+  ]
+ }
+}
