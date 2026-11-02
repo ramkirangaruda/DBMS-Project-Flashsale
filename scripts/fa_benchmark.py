@@ -605,6 +605,10 @@ for _name, _strategy, _p in (("main10", "pessimistic", 1.0), ("main07opt", "opti
         "p_show": [_p], "ratio": [10], "seeds": [0, 1, 2, 3, 4, 5],
         "stock": 200, "delay": "lognormal:2,1", "p_pay": 1.0, "deadline_s": 90.0}
 
+# Round 5 (D30): demand ratio 3, the last first-pass dimension not yet on
+# the frontier; pessimistic, p_show 0.7, same arms as round 4.
+GRIDS["main07r3"] = {**GRIDS["main10"], "p_show": [0.7], "ratio": [3]}
+
 PRIOR_SOURCE_ARM = "cwp:1.0"
 
 
