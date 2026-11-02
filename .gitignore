@@ -26,5 +26,8 @@ data/*.xlsx
 .idea/
 .DS_Store
 
+# Personal Claude Code overrides (not shared with the team)
+.claude/settings.local.json
+
 # Trained ML model binary (metrics JSON next to it IS committed)
 app/ml/artifacts/*.joblib
