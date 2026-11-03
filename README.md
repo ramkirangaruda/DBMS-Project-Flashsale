@@ -387,7 +387,11 @@ separate from, and after, the concurrency-control decision the three
   pessimistic/optimistic, the Redis `stock:{sale_id}` counter for the
   Redis fast path. Gated on a conditional `UPDATE ... WHERE status !=
   'failed'`, so a redelivered webhook (Stripe does not guarantee
-  exactly-once delivery) cannot release the same unit twice.
+  exactly-once delivery) cannot release the same unit twice. A retry after
+  a released decline takes a unit back first (or gets `409` if the sale has
+  sold out since), so a paid retry never charges for stock that is back on
+  sale. Without `STRIPE_WEBHOOK_SECRET` the webhook refuses events unless
+  `STRIPE_WEBHOOK_ALLOW_UNVERIFIED=true` (local testing only).
 - **Fails soft, not loud, when unset.** `STRIPE_SECRET_KEY` is read lazily,
   per request, not at import time -- a student without a Stripe account
   still gets the storefront, dashboard, and every other demo; only

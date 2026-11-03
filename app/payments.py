@@ -62,6 +62,15 @@ STOCK RECONCILIATION ON DECLINE
     -- cannot release the same unit twice. An order whose `strategy` is NULL
     (any order written before this column existed) is left alone with a
     logged warning rather than guessed at.
+
+    ONE RELEASE PER HELD UNIT (security review): a release happens only for
+    the order's latest attempt and only once (`stock_released_at`), and a
+    retry after a released decline first takes a unit back
+    (`_hold_unit_for_retry`) or is refused with 409 if none is left. Both
+    paths lock the order row. Previously an order declined twice released
+    two units, and a successful retry charged for a unit already back on
+    sale. Unsigned webhooks are refused unless
+    STRIPE_WEBHOOK_ALLOW_UNVERIFIED=true.
 """
 import json
 import os
@@ -85,6 +94,9 @@ IDEMPOTENCY_MAX_RETRIES = 8
 IDEMPOTENCY_RETRY_BACKOFF_S = 0.35
 DEFAULT_CURRENCY = "usd"
 DEFAULT_PAYMENT_METHOD = "pm_card_visa"
+# Unverified webhooks are refused unless this is set -- see stripe_webhook().
+ALLOW_UNVERIFIED_WEBHOOKS = os.getenv("STRIPE_WEBHOOK_ALLOW_UNVERIFIED", "").strip().lower() in (
+    "1", "true", "yes", "on")
 
 STRIPE_KEY_HELP = (
     "STRIPE_SECRET_KEY is not set, so this endpoint cannot reach Stripe. "
@@ -270,13 +282,13 @@ def _release_reserved_unit(db: Session, sale_id, strategy):
             {"sid": sale_id},
         ).fetchone()
         if not inv:
-            return f"no inventory row for sale {sale_id}; skipped"
+            return False, f"no inventory row for sale {sale_id}; skipped"
         inv_id, before = inv
         if before <= 0:
             # Would go negative -- a real inconsistency somewhere else, not
             # something to paper over by releasing anyway.
-            return (f"inventory {inv_id} reserved_stock already {before}; "
-                    f"release skipped rather than going negative")
+            return False, (f"inventory {inv_id} reserved_stock already {before}; "
+                           f"release skipped rather than going negative")
         db.execute(
             text("UPDATE inventory SET reserved_stock = reserved_stock - 1 WHERE id = :id"),
             {"id": inv_id},
@@ -289,11 +301,11 @@ def _release_reserved_unit(db: Session, sale_id, strategy):
             """),
             {"inv_id": inv_id, "before": before, "after": before - 1},
         )
-        return f"inventory {inv_id} reserved_stock {before} -> {before - 1}"
+        return True, f"inventory {inv_id} reserved_stock {before} -> {before - 1}"
 
     if strategy == "redis":
         if _redis is None:
-            return "redis client unavailable; release skipped"
+            return False, "redis client unavailable; release skipped"
         key = f"stock:{sale_id}"
         after = _redis.incr(key)
         before = after - 1
@@ -310,10 +322,108 @@ def _release_reserved_unit(db: Session, sale_id, strategy):
                 """),
                 {"inv_id": inv[0], "before": before, "after": after},
             )
-        return f"redis counter {key} {before} -> {after}"
+        return True, f"redis counter {key} {before} -> {after}"
 
-    return (f"order's strategy is {strategy!r} -- unknown or predates the "
-            f"strategy column; stock NOT reconciled, left for manual review")
+    return False, (f"order's strategy is {strategy!r} -- unknown or predates the "
+                   f"strategy column; stock NOT reconciled, left for manual review")
+
+
+# Take one unit, but only from a counter that exists and is positive. A bare
+# DECR on a missing key would create it at -1 (then 0 after compensating),
+# which /checkout/redis would read as "sold out" forever.
+_REDIS_TAKE_ONE = """
+local v = redis.call('GET', KEYS[1])
+if v and tonumber(v) > 0 then return redis.call('DECR', KEYS[1]) end
+return -1
+"""
+
+
+def _rereserve_unit(db: Session, sale_id, strategy):
+    """
+    The inverse of _release_reserved_unit(), for a payment RETRY on an order
+    whose unit a declined attempt already gave back. Returns True only if a
+    unit was actually taken.
+
+    Why this exists: a decline releases the order's unit, but the order stays
+    'confirmed' and the attempt counter lets the buyer pay again. Before this,
+    that retry charged the card without holding any stock -- a sold unit that
+    could be sold a second time to someone else -- and a second decline
+    released a unit the order no longer held, inflating stock again.
+    """
+    if strategy in ("pessimistic", "optimistic"):
+        row = db.execute(
+            text("""
+                UPDATE inventory
+                SET reserved_stock = reserved_stock + 1, version = version + 1
+                WHERE sale_id = :sid AND reserved_stock < total_stock
+                RETURNING id, reserved_stock
+            """),
+            {"sid": sale_id},
+        ).fetchone()
+        if not row:
+            return False
+        db.execute(
+            text("""
+                INSERT INTO stock_audit_log
+                    (id, inventory_id, operation, before_value, after_value, timestamp, committed)
+                VALUES (gen_random_uuid(), :inv_id, 'payment_retry_rereserve', :before, :after, now(), 'true')
+            """),
+            {"inv_id": row[0], "before": row[1] - 1, "after": row[1]},
+        )
+        return True
+    if strategy == "redis":
+        if _redis is None:
+            return False
+        return int(_redis.eval(_REDIS_TAKE_ONE, 1, f"stock:{sale_id}")) >= 0
+    return False
+
+
+def _hold_unit_for_retry(db: Session, order_id, attempt, amount_cents, payment_method):
+    """
+    Before a new attempt (attempt > 1) reaches Stripe: if the previous,
+    failed attempt released the order's unit, take a unit back, and record
+    the new attempt's row -- all under a lock on the order row, so that ten
+    simultaneous retries re-reserve ONE unit, not ten, and the webhook's
+    release (which takes the same lock) cannot interleave.
+
+    Raises 409 if the unit was released and the sale has since sold out.
+    """
+    db.execute(text("SELECT id FROM orders WHERE id = :oid FOR UPDATE"), {"oid": order_id})
+    latest = db.execute(
+        text("""
+            SELECT attempt, status, stock_released_at FROM payments
+            WHERE order_id = :oid ORDER BY attempt DESC LIMIT 1
+        """),
+        {"oid": order_id},
+    ).fetchone()
+    if latest is None or latest[0] >= attempt or latest[1] != "failed":
+        # A concurrent retry already created this attempt (and re-reserved
+        # for it); nothing more to hold.
+        db.commit()
+        return
+    if latest[2] is not None:
+        sale_id, strategy = db.execute(
+            text("SELECT sale_id, strategy FROM orders WHERE id = :oid"), {"oid": order_id},
+        ).fetchone()
+        if not _rereserve_unit(db, sale_id, strategy):
+            db.rollback()
+            raise HTTPException(
+                409,
+                "The previous payment attempt was declined and its unit went back "
+                "on sale; none is left to hold for a retry.")
+    db.execute(
+        text("""
+            INSERT INTO payments
+                (id, order_id, attempt, status, amount_cents, currency, payment_method,
+                 last_event, created_at, updated_at)
+            VALUES (gen_random_uuid(), :oid, :attempt, 'processing', :amount, :currency,
+                    :pm, 'retry_unit_held', now(), now())
+            ON CONFLICT (order_id, attempt) DO NOTHING
+        """),
+        {"oid": order_id, "attempt": attempt, "amount": amount_cents,
+         "currency": DEFAULT_CURRENCY, "pm": payment_method},
+    )
+    db.commit()
 
 
 # --------------------------------------------------------------------------
@@ -411,6 +521,10 @@ def create_payment(
     if amount_cents <= 0:
         raise HTTPException(500, f"Resolved a non-positive amount ({amount}) for order {oid}.")
 
+    if latest is not None and attempt > latest[0]:
+        _hold_unit_for_retry(db, oid, attempt, amount_cents, payment_method)
+        attempt, _ = _next_attempt(db, oid)
+
     try:
         intent, tries, decline_exc = _create_and_confirm(
             stripe, oid, attempt, amount_cents, DEFAULT_CURRENCY, payment_method)
@@ -501,8 +615,19 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             raise HTTPException(400, "Invalid Stripe webhook signature.")
         except ValueError:
             raise HTTPException(400, "Invalid webhook payload.")
+    elif not ALLOW_UNVERIFIED_WEBHOOKS:
+        # Unverified events used to be accepted whenever the secret was unset.
+        # That let anyone on the network POST a fake payment_intent.payment_failed
+        # for a PAID order (intent ids are returned to buyers by /payment/create)
+        # and release its unit back on sale: an oversell on demand. Now it is
+        # an explicit opt-in for local testing only.
+        raise HTTPException(
+            503,
+            "STRIPE_WEBHOOK_SECRET is not set, so webhook signatures cannot be "
+            "verified. Set it (from `stripe listen`), or set "
+            "STRIPE_WEBHOOK_ALLOW_UNVERIFIED=true for local testing only.")
     else:
-        # No STRIPE_WEBHOOK_SECRET configured -- accept unverified.
+        # Opted in with STRIPE_WEBHOOK_ALLOW_UNVERIFIED -- accept unverified.
         # Deliberate and loud, not silent: logged on every call, and it is
         # the one place in this module that is NOT how a production
         # deployment should run. It exists so the webhook path is testable
@@ -518,9 +643,12 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         except Exception:                                       # noqa: BLE001
             raise HTTPException(400, "Invalid JSON body.")
 
-    etype = event["type"]
-    obj = event["data"]["object"]
-    order_id = (obj.get("metadata") or {}).get("flashsale_order_id")
+    try:
+        etype = event["type"]
+        obj = event["data"]["object"]
+        order_id = (obj.get("metadata") or {}).get("flashsale_order_id")
+    except (KeyError, TypeError, AttributeError):
+        raise HTTPException(400, "Malformed webhook event.")
     intent_id = obj.get("id")
 
     if not order_id or etype not in ("payment_intent.succeeded", "payment_intent.payment_failed"):
@@ -544,6 +672,11 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     new_status = "succeeded" if etype == "payment_intent.succeeded" else "failed"
     last_error = obj.get("last_payment_error") or {}
 
+    # Same lock _hold_unit_for_retry() takes: a release and a retry's
+    # re-reservation for the same order never interleave.
+    db.execute(text("SELECT id FROM orders WHERE id = :oid FOR UPDATE"),
+               {"oid": payment_row[1]})
+
     # Atomic, and the ONLY guard needed against a redelivered webhook: this
     # UPDATE returns a row ONLY on the transition INTO new_status, never on
     # a webhook that arrives after that transition already happened.
@@ -557,6 +690,9 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
                 last_webhook_event_id = :event_id,
                 updated_at = now()
             WHERE id = :pid AND status != :status
+              -- a succeeded payment is terminal: a late or forged failure
+              -- must not flip it and hand its unit back
+              AND NOT (status = 'succeeded' AND :status = 'failed')
             RETURNING id
         """),
         {
@@ -566,28 +702,44 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             "last_event": f"webhook:{etype}", "event_id": event.get("id"),
         },
     ).fetchone()
-    db.commit()
 
     if not transitioned:
         # Already applied by an earlier delivery of this same event -- a
         # no-op, not an error.
+        db.commit()
         return {"received": True, "handled": False, "type": etype,
                "order_id": order_id, "note": "already applied"}
 
     if new_status == "failed":
+        # Release at most once per unit the order actually holds: only for
+        # the order's LATEST attempt, and only if that attempt has not
+        # released already. Before this, every declined attempt released a
+        # unit, so an order declined twice put two units back on sale.
+        claimed = db.execute(
+            text("""
+                UPDATE payments SET stock_released_at = now()
+                WHERE id = :pid AND stock_released_at IS NULL
+                  AND attempt = (SELECT max(attempt) FROM payments WHERE order_id = :oid)
+                RETURNING id
+            """),
+            {"pid": payment_row[0], "oid": payment_row[1]},
+        ).fetchone()
         order_row = db.execute(
             text("SELECT sale_id, strategy FROM orders WHERE id = :oid"),
             {"oid": payment_row[1]},
-        ).fetchone()
+        ).fetchone() if claimed else None
         if order_row:
             sale_id, strategy = order_row
-            outcome = _release_reserved_unit(db, sale_id, strategy)
-            db.execute(
-                text("UPDATE payments SET stock_released_at = now() WHERE id = :pid"),
-                {"pid": payment_row[0]},
-            )
-            db.commit()
+            released, outcome = _release_reserved_unit(db, sale_id, strategy)
+            if not released:
+                # Nothing went back on sale, so a retry has nothing to re-take.
+                db.execute(text("UPDATE payments SET stock_released_at = NULL WHERE id = :pid"),
+                           {"pid": payment_row[0]})
             print(f"payment {payment_row[0]} (order {order_id}) declined -- {outcome}")
+
+    # Status transition and stock release commit together: a crash between
+    # them can no longer record a decline whose unit is never released.
+    db.commit()
 
     return {"received": True, "handled": True, "type": etype, "order_id": order_id}
 
