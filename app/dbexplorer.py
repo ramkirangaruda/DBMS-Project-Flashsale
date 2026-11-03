@@ -12,21 +12,20 @@ Serves the frontend's /database page.
 import base64
 import datetime as dt
 import decimal
-import os
 import uuid
 
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import text
 
 from app.database import SessionLocal
+from app.security import admin_token_ok
 
 router = APIRouter(prefix="/db-explorer", tags=["db-explorer"])
 MAX_PAGE = 500
 
 
 def _check_token(token: str):
-    required = os.getenv("ADMIN_TOKEN", "")
-    if required and token != required:
+    if not admin_token_ok(token):
         raise HTTPException(403, "Bad or missing admin token.")
 
 

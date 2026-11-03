@@ -50,6 +50,7 @@ from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import text
 
 from app import admission_control, claim_window, db_limiter, stock_view
+from app.security import admin_token_ok
 from app.metrics import (
     QUEUE_ADMISSION_LEADER,
     QUEUE_ADMITS,
@@ -717,18 +718,28 @@ async def queue_status(sale_id: str, token: str = Query(..., description="queue_
     return await status(_aredis, sale_id, token)
 
 
+def _require_admin(token):
+    """Same optional ADMIN_TOKEN policy as POST /admin/reset-sale. These two
+    endpoints had no check at all: anyone could wipe a live sale's queue and
+    revoke every outstanding admission in the middle of a drop."""
+    if not admin_token_ok(token):
+        raise HTTPException(403, "Bad or missing admin token.")
+
+
 @router.post("/reset/{sale_id}")
-async def queue_reset(sale_id: str):
+async def queue_reset(sale_id: str, token: str = ""):
     """Clear the queue and revoke outstanding admissions -- for reruns.
     Same spirit as POST /admin/reset-sale, which rewinds stock."""
+    _require_admin(token)
     return await reset(_aredis, sale_id)
 
 
 @router.post("/control/reset")
-def queue_control_reset():
+def queue_control_reset(token: str = ""):
     """Forget the adaptive controller's learned admission rate (slow start
     again). Benchmarks call this between arms so one run's rate does not leak
     into the next."""
+    _require_admin(token)
     admission_control.reset_state(_redis)
     if claim_window.ENABLED:
         claim_window.reset(_redis)

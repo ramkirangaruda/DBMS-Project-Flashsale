@@ -33,6 +33,7 @@ from app.salewindow import install as install_salewindow
 from app.payments import install as install_payments
 from app.dbexplorer import install as install_dbexplorer
 from app.tracing import install as install_tracing
+from app.security import admin_token_ok
 from app.ml.demand_forecast import get_forecast_sample
 
 # Vercel sets VERCEL=1 in every function's environment. Checked in a few
@@ -579,9 +580,6 @@ def demand_forecast():
     return get_forecast_sample()
 
 
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
-
-
 @app.post("/admin/reset-sale/{sale_id}")
 def reset_sale(sale_id: str, stock: int = 1, token: str = "", db: Session = Depends(get_db)):
     """
@@ -602,7 +600,7 @@ def reset_sale(sale_id: str, stock: int = 1, token: str = "", db: Session = Depe
     exists for -- the endpoint is unlinked and resets nothing but demo stock.
     Set the token before exposing the port to anything wider.
     """
-    if ADMIN_TOKEN and token != ADMIN_TOKEN:
+    if not admin_token_ok(token):
         return JSONResponse(status_code=403,
                             content={"status": "failed", "message": "Bad or missing admin token."})
     if stock < 0:
