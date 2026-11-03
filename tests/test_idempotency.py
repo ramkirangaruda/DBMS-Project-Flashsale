@@ -103,3 +103,64 @@ def test_concurrent_duplicates_execute_exactly_once(redis_client, uniq):
     [t.join() for t in ts]
     assert calls["n"] == 1
     assert {o["order_id"] for o in out} == {"only"}
+
+
+# ---------------------------------------------------------------------------
+# A key is bound to the request that created it (security review)
+# ---------------------------------------------------------------------------
+def _multi_app(redis_client):
+    app = FastAPI()
+    calls = []
+
+    @app.post("/checkout/{strategy}")
+    def checkout(strategy: str, sale_id: str, user_id: str):
+        calls.append((strategy, sale_id, user_id))
+        return {"status": "confirmed", "order_id": f"{user_id}-{len(calls)}"}
+
+    install(app, redis_client)
+    return TestClient(app), calls
+
+
+def test_another_buyers_key_does_not_replay_their_order(redis_client, uniq):
+    """Before the fix a different user sending the same key got the first
+    buyer's order_id back, marked confirmed, without anything executing."""
+    c, calls = _multi_app(redis_client)
+    k = {"Idempotency-Key": f"t-{uniq}"}
+    first = c.post("/checkout/pessimistic", params={"sale_id": "s", "user_id": "alice"}, headers=k)
+    other = c.post("/checkout/pessimistic", params={"sale_id": "s", "user_id": "mallory"}, headers=k)
+    assert first.status_code == 200
+    assert other.status_code == 422
+    assert "alice" not in other.text
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("path,params", [
+    ("/checkout/optimistic", {"sale_id": "s", "user_id": "alice"}),     # other strategy
+    ("/checkout/pessimistic", {"sale_id": "t", "user_id": "alice"}),    # other sale
+])
+def test_key_reused_for_a_different_request_is_refused_not_executed(redis_client, uniq,
+                                                                    path, params):
+    c, calls = _multi_app(redis_client)
+    k = {"Idempotency-Key": f"t-{uniq}"}
+    c.post("/checkout/pessimistic", params={"sale_id": "s", "user_id": "alice"}, headers=k)
+    assert c.post(path, params=params, headers=k).status_code == 422
+    assert len(calls) == 1
+
+
+def test_same_request_with_reordered_query_still_replays(redis_client, uniq):
+    c, calls = _multi_app(redis_client)
+    k = {"Idempotency-Key": f"t-{uniq}"}
+    a = c.post("/checkout/pessimistic?sale_id=s&user_id=alice", headers=k)
+    b = c.post("/checkout/pessimistic?user_id=alice&sale_id=s", headers=k)
+    assert b.headers["Idempotent-Replay"] == "true"
+    assert a.json() == b.json() and len(calls) == 1
+
+
+def test_entries_cached_before_fingerprints_still_replay(redis_client, uniq):
+    c, calls = _multi_app(redis_client)
+    redis_client.set(f"idempotency:t-{uniq}",
+                     json.dumps({"status_code": 200, "body": '{"status": "confirmed", "order_id": "old"}'}),
+                     ex=60)
+    r = c.post("/checkout/pessimistic", params={"sale_id": "s", "user_id": "alice"},
+               headers={"Idempotency-Key": f"t-{uniq}"})
+    assert r.json()["order_id"] == "old" and calls == []

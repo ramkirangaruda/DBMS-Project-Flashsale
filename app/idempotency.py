@@ -41,6 +41,20 @@ WHAT IS *NOT* CACHED  (added after an audit)
     order, "sold out", "sale not found" -- are still cached, which is what
     makes a duplicate request safe.
 
+A KEY IS BOUND TO ONE REQUEST  (added after a security review)
+    The key alone used to address the cache, with no check that the replayed
+    response belonged to the request asking for it. Any client that sent
+    another buyer's key -- to any checkout path, for any sale or user --
+    received that buyer's cached response: their order_id, and a
+    "confirmed" for a purchase this client never made. The cached entry now
+    records a fingerprint of the request that produced it (method, path,
+    query string); a later request with the same key but a different
+    fingerprint gets 422, as Stripe does, and is never executed. Refusing
+    rather than executing matters: the admission door lets a request whose
+    key matches the claiming request through a spent token (so a lost
+    response can be replayed), and that pass must only ever lead to a
+    replay, never to a second checkout.
+
 REDIS CLIENT
     Request-path Redis calls go through the async client when one is supplied
     (`aredis_getter`) so a 10 ms poll loop of waiting duplicates cannot block
@@ -64,6 +78,27 @@ DEFAULT_PATH_PREFIXES = ("/checkout/",)
 
 def _key(raw: str) -> str:
     return f"idempotency:{raw}"
+
+
+def fingerprint(request) -> str:
+    """What makes two requests "the same request" for replay purposes.
+    Query parameters are sorted so their order does not matter."""
+    query = "&".join(f"{k}={v}" for k, v in sorted(request.query_params.multi_items()))
+    return f"{request.method.upper()} {request.url.path}?{query}"
+
+
+def _mismatch(key: str) -> Response:
+    return Response(
+        content=json.dumps({
+            "status": "failed",
+            "order_id": None,
+            "message": "This Idempotency-Key was already used for a different request.",
+            "strategy": "",
+        }).encode("utf-8"),
+        status_code=422,
+        media_type="application/json",
+        headers={"Idempotency-Key": key},
+    )
 
 
 def is_cacheable(status_code: int, body: bytes) -> bool:
@@ -122,7 +157,11 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         return request.url.path.startswith(self.path_prefixes)
 
     @staticmethod
-    def _replay(payload: dict, key: str) -> Response:
+    def _replay(payload: dict, key: str, fp: str = None) -> Response:
+        # Entries written before fingerprints existed carry none; they
+        # replay as before rather than being invalidated.
+        if fp is not None and payload.get("fingerprint") not in (None, fp):
+            return _mismatch(key)
         return Response(
             content=payload["body"].encode("utf-8"),
             status_code=payload["status_code"],
@@ -132,7 +171,7 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
             headers={"Idempotent-Replay": "true", "Idempotency-Key": key},
         )
 
-    async def _await_winner(self, redis_key, key):
+    async def _await_winner(self, redis_key, key, fp=None):
         """Another request holds the reservation; wait for its result."""
         deadline = asyncio.get_event_loop().time() + WAIT_TIMEOUT_S
         while asyncio.get_event_loop().time() < deadline:
@@ -142,7 +181,7 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
                 # Winner died and cleaned up; let this request execute instead.
                 return None
             if raw != RESERVATION_MARKER:
-                return self._replay(json.loads(raw), key)
+                return self._replay(json.loads(raw), key, fp)
         return Response(
             content=json.dumps({
                 "status": "failed",
@@ -162,6 +201,7 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
             return await call_next(request)          # unchanged path
 
         redis_key = _key(key)
+        fp = fingerprint(request)
 
         try:
             cached = await self._get(redis_key)
@@ -171,10 +211,10 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         if cached is not None and cached != RESERVATION_MARKER:
-            return self._replay(json.loads(cached), key)
+            return self._replay(json.loads(cached), key, fp)
 
         if cached == RESERVATION_MARKER:
-            replayed = await self._await_winner(redis_key, key)
+            replayed = await self._await_winner(redis_key, key, fp)
             if replayed is not None:
                 return replayed
 
@@ -187,7 +227,7 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         if not won:
-            replayed = await self._await_winner(redis_key, key)
+            replayed = await self._await_winner(redis_key, key, fp)
             if replayed is not None:
                 return replayed
             # Winner vanished; fall through and execute.
@@ -209,7 +249,8 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
                 await self._set(
                     redis_key,
                     json.dumps({"status_code": response.status_code,
-                                "body": body.decode("utf-8")}),
+                                "body": body.decode("utf-8"),
+                                "fingerprint": fp}),
                     ex=IDEMPOTENCY_TTL_S,
                 )
             else:

@@ -139,3 +139,16 @@ def test_token_for_another_sale_is_refused(door, redis_client):
     token = uuid.uuid4().hex
     redis_client.set(ADMISSION_KEY.format(token=token), json.dumps({"sale_id": "other"}), ex=60)
     assert buy(client, token, "u").status_code == 403
+
+
+def test_matching_key_on_a_spent_token_cannot_buy_through_another_path(door):
+    """The door lets a request whose Idempotency-Key matches the claiming one
+    through a spent token, so a lost response can be replayed. That pass must
+    end in a replay or a refusal, never in a second checkout."""
+    client, state, mint = door
+    token, key = mint(), f"k-{uuid.uuid4().hex}"
+    assert buy(client, token, "u1", headers={"Idempotency-Key": key}).json()["status"] == "confirmed"
+    again = buy(client, token, "u1", fail=False, headers={"Idempotency-Key": key},
+                extra="changed-query")
+    assert again.status_code == 422
+    assert len(state["orders"]) == 1
