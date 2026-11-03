@@ -1,0 +1,47 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      # Same images and published ports as docker-compose.yml, so the app's
+      # defaults (Postgres 5435, Redis 6390) work with no extra config.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: flashsale
+        ports: ["5435:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s
+          --health-timeout 5s --health-retries 20
+      redis:
+        image: redis:7
+        ports: ["6390:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 2s
+          --health-timeout 5s --health-retries 20
+    env:
+      OTEL_SDK_DISABLED: "true"
+      # Integration tests fail, instead of skipping, if a service is missing.
+      REQUIRE_SERVICES: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"     # matches the Dockerfile
+          cache: pip
+          cache-dependency-path: api/requirements.txt
+      # The trimmed API dependency set is all the suite needs; the full
+      # requirements.txt adds ML, tracing and screenshot tooling.
+      - run: pip install -r api/requirements.txt httpx==0.28.1 pytest
+      - run: python -m pytest -q -rxs

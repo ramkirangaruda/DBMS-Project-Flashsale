@@ -14,6 +14,16 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 
+# CI sets REQUIRE_SERVICES=1 so a missing Postgres/Redis FAILS the run instead
+# of quietly skipping every integration test and reporting green.
+REQUIRE_SERVICES = os.getenv("REQUIRE_SERVICES") == "1"
+
+
+def _unavailable(msg):
+    if REQUIRE_SERVICES:
+        pytest.fail(msg + " -- REQUIRE_SERVICES=1", pytrace=False)
+    pytest.skip(msg)
+
 
 @pytest.fixture(scope="session")
 def redis_client():
@@ -23,7 +33,7 @@ def redis_client():
     try:
         r.ping()
     except redis.RedisError:
-        pytest.skip("Redis not reachable (docker compose up -d redis)")
+        _unavailable("Redis not reachable (docker compose up -d redis)")
     return r
 
 
@@ -40,7 +50,7 @@ def db_engine():
         with engine.connect() as c:
             c.execute(text("SELECT 1"))
     except Exception:                                          # noqa: BLE001
-        pytest.skip("Postgres not reachable (docker compose up -d postgres)")
+        _unavailable("Postgres not reachable (docker compose up -d postgres)")
     return engine
 
 
